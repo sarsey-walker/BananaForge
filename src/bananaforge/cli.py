@@ -177,6 +177,21 @@ def cli(ctx, verbose: bool, quiet: bool, config):
     default=True,
     help="Include detailed metadata in 3MF files (default: enabled)"
 )
+@click.option(
+    "--skip-transparency-check",
+    is_flag=True,
+    help="Skip transparency detection and proceed with RGB conversion (may affect quality)"
+)
+@click.option(
+    "--analyze-transparency",
+    is_flag=True,
+    help="Perform detailed transparency analysis and show statistics for all images"
+)
+@click.option(
+    "--transparency-verbose",
+    is_flag=True,
+    help="Show detailed technical information in transparency reports"
+)
 @click.pass_context
 def convert(
     ctx,
@@ -206,6 +221,9 @@ def convert(
     mixed_precision,
     bambu_compatible,
     include_3mf_metadata,
+    skip_transparency_check,
+    analyze_transparency,
+    transparency_verbose,
 ):
     """Convert an image to a multi-layer 3D model."""
 
@@ -230,6 +248,57 @@ def convert(
 
         # Initialize components
         image_processor = ImageProcessor(device)
+
+        # Transparency detection (unless skipped)
+        if not skip_transparency_check or analyze_transparency:
+            from .image.transparency_detector import TransparencyDetector
+            from .image.transparency_notifier import TransparencyNotifier, TransparencyException
+            from .image.transparency_reporter import TransparencyReporter
+            
+            try:
+                transparency_detector = TransparencyDetector()
+                transparency_info = transparency_detector.detect_transparency(input_image)
+                
+                # Always show analysis if requested
+                if analyze_transparency:
+                    transparency_reporter = TransparencyReporter()
+                    stats = transparency_reporter.generate_detailed_report(transparency_info, input_image)
+                    report = transparency_reporter.format_statistics_report(stats, verbose=transparency_verbose)
+                    console.print("\n" + report)
+                
+                # Stop processing if transparency detected (unless skipped)
+                if transparency_info.has_transparency and not skip_transparency_check:
+                    transparency_notifier = TransparencyNotifier()
+                    notification = transparency_notifier.create_notification(transparency_info)
+                    
+                    # Show notification
+                    cli_message = transparency_notifier.format_cli_message(
+                        notification, 
+                        show_technical=transparency_verbose,
+                        show_suggestions=True
+                    )
+                    console.print(cli_message)
+                    
+                    # Show educational content if verbose
+                    if transparency_verbose:
+                        educational_content = transparency_notifier.get_educational_content(transparency_info)
+                        console.print(educational_content)
+                    
+                    # Exit with helpful message
+                    console.print("\n💡 Use --skip-transparency-check to proceed anyway (may affect quality)")
+                    console.print("💡 Use --analyze-transparency to see detailed transparency analysis")
+                    sys.exit(1)
+                
+                elif not transparency_info.has_transparency and analyze_transparency:
+                    console.print("✅ No transparency detected - image is ready for 3D printing optimization!")
+                    
+            except Exception as e:
+                if not skip_transparency_check:
+                    console.print(f"⚠️ Transparency detection failed: {e}")
+                    console.print("💡 Use --skip-transparency-check to bypass detection and proceed")
+                    sys.exit(1)
+                else:
+                    logger.warning(f"Transparency detection failed but skipped: {e}")
 
         # Load material database
         if materials:

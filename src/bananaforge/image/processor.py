@@ -1,6 +1,7 @@
 """Image processing utilities for BananaForge."""
 
 from typing import Dict, Optional, Tuple, Union
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,6 +11,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 
 from ..utils.color import ColorConverter
+from .transparency_detector import TransparencyDetector, TransparencyInfo
 
 
 class ImageProcessor:
@@ -32,6 +34,9 @@ class ImageProcessor:
         self.normalize = transforms.Normalize(
             mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
         )
+        
+        # Transparency detection integration
+        self.transparency_detector = TransparencyDetector()
 
     def load_image(
         self,
@@ -508,6 +513,124 @@ class ImageProcessor:
             Thumbnail tensor
         """
         return F.interpolate(image, size=size, mode="bilinear", align_corners=False)
+    
+    # Transparency detection integration methods
+    def detect_transparency(self, image_path: Union[str, Path]) -> TransparencyInfo:
+        """
+        Detect transparency in an image file.
+        
+        Integrates transparency detection cleanly with ImageProcessor while
+        maintaining separation of concerns. Detection does not modify the image
+        or affect processing operations.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            TransparencyInfo object containing detection results
+            
+        Raises:
+            FileNotFoundError: If the image file doesn't exist
+            IOError: If the file cannot be opened or is not a valid image
+        """
+        return self.transparency_detector.detect_transparency(image_path)
+    
+    def load_image_with_transparency(
+        self, 
+        image_path: Union[str, Path], 
+        target_size: Optional[Tuple[int, int]] = None,
+        maintain_aspect: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Load image with optional alpha channel preservation.
+        
+        This method provides alpha channel preservation while maintaining
+        backward compatibility. The RGB processing follows the same pipeline
+        as the standard load_image method.
+        
+        Args:
+            image_path: Path to image file
+            target_size: Optional target size (height, width)
+            maintain_aspect: Whether to maintain aspect ratio
+            
+        Returns:
+            Tuple of (rgb_tensor, alpha_mask)
+            - rgb_tensor: RGB image tensor (1, 3, H, W)
+            - alpha_mask: Alpha mask tensor (1, 1, H, W)
+            
+        Raises:
+            FileNotFoundError: If the image file doesn't exist
+            IOError: If the file cannot be opened or is not a valid image
+        """
+        from pathlib import Path
+        
+        # Convert to Path object for consistent handling
+        path = Path(image_path)
+        
+        if not path.exists():
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+        
+        try:
+            # Open image preserving original mode
+            with Image.open(path) as image:
+                original_mode = image.mode
+                
+                # Handle different image modes for alpha extraction
+                alpha_mask = None
+                
+                if original_mode == 'RGBA':
+                    # Extract alpha channel before RGB conversion
+                    alpha_channel = image.split()[-1]  # Alpha is last channel
+                    alpha_array = np.array(alpha_channel)
+                    alpha_mask = torch.from_numpy(alpha_array).float() / 255.0
+                    alpha_mask = alpha_mask.unsqueeze(0).unsqueeze(0).to(self.device)
+                    
+                elif original_mode == 'LA':
+                    # Grayscale with alpha
+                    alpha_channel = image.split()[-1]
+                    alpha_array = np.array(alpha_channel)
+                    alpha_mask = torch.from_numpy(alpha_array).float() / 255.0
+                    alpha_mask = alpha_mask.unsqueeze(0).unsqueeze(0).to(self.device)
+                    
+                elif original_mode == 'P' and 'transparency' in image.info:
+                    # Palette with transparency key
+                    # Convert to RGBA first to extract alpha properly
+                    rgba_image = image.convert('RGBA')
+                    alpha_channel = rgba_image.split()[-1]
+                    alpha_array = np.array(alpha_channel)
+                    alpha_mask = torch.from_numpy(alpha_array).float() / 255.0
+                    alpha_mask = alpha_mask.unsqueeze(0).unsqueeze(0).to(self.device)
+                    
+                else:
+                    # No transparency - create opaque alpha mask
+                    width, height = image.size
+                    alpha_mask = torch.ones(1, 1, height, width, device=self.device)
+                
+                # Now process RGB using existing pipeline (ensures backward compatibility)
+                rgb_image = image.convert("RGB")
+                
+                # Resize if needed (same logic as load_image)
+                if target_size is not None:
+                    if maintain_aspect:
+                        rgb_image = self._resize_with_aspect(rgb_image, target_size)
+                    else:
+                        rgb_image = rgb_image.resize((target_size[1], target_size[0]), Image.LANCZOS)
+                    
+                    # Also resize alpha mask to match
+                    if alpha_mask is not None:
+                        target_h, target_w = target_size
+                        alpha_mask = F.interpolate(
+                            alpha_mask, size=(target_h, target_w), 
+                            mode='bilinear', align_corners=False
+                        )
+                
+                # Convert RGB to tensor (same as load_image)
+                rgb_tensor = self.to_tensor(rgb_image).unsqueeze(0).to(self.device)
+                
+                return rgb_tensor, alpha_mask
+                
+        except Exception as e:
+            raise IOError(f"Cannot open image file {image_path}: {e}")
 
 
 class BatchImageProcessor:

@@ -158,6 +158,7 @@ test_output/
 CLAUDE.md
 ref/
 
+output/
 outputs/
 examples/outputs/
 *.jpg
