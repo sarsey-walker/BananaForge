@@ -130,20 +130,11 @@ class STLGenerator:
         )
         valid_i, valid_j = np.nonzero(quad_valid)
 
-        v0 = top_vertices[valid_i, valid_j]
-        v1 = top_vertices[valid_i, valid_j + 1]
-        v2 = top_vertices[valid_i + 1, valid_j + 1]
-        v3 = top_vertices[valid_i + 1, valid_j]
-        top_triangles = np.concatenate(
-            [np.stack([v2, v1, v0], axis=1), np.stack([v3, v2, v0], axis=1)], axis=0
+        top_triangles = self._create_greedy_top_triangles(
+            top_vertices, quad_valid
         )
-
-        bv0 = bottom_vertices[valid_i, valid_j]
-        bv1 = bottom_vertices[valid_i, valid_j + 1]
-        bv2 = bottom_vertices[valid_i + 1, valid_j + 1]
-        bv3 = bottom_vertices[valid_i + 1, valid_j]
-        bottom_triangles = np.concatenate(
-            [np.stack([bv0, bv1, bv2], axis=1), np.stack([bv0, bv2, bv3], axis=1)], axis=0
+        bottom_triangles = self._create_greedy_bottom_triangles(
+            bottom_vertices, quad_valid
         )
         
         # --- Side Walls ---
@@ -258,6 +249,109 @@ class STLGenerator:
         mesh = trimesh.load(buffer, file_type="stl")
         mesh.merge_vertices()
         return mesh
+
+    def _create_greedy_top_triangles(
+        self, top_vertices: np.ndarray, quad_valid: np.ndarray
+    ) -> np.ndarray:
+        """Create top triangles, merging coplanar cell rectangles."""
+        z = top_vertices[:, :, 2]
+        flat_quads = (
+            quad_valid
+            & np.isclose(z[:-1, :-1], z[:-1, 1:])
+            & np.isclose(z[:-1, :-1], z[1:, 1:])
+            & np.isclose(z[:-1, :-1], z[1:, :-1])
+        )
+
+        triangles = []
+
+        rounded_z = np.round(z[:-1, :-1], decimals=6)
+        for i, j, rect_h, rect_w in self._greedy_rectangles(
+            flat_quads, rounded_z
+        ):
+            v0 = top_vertices[i, j]
+            v1 = top_vertices[i, j + rect_w]
+            v2 = top_vertices[i + rect_h, j + rect_w]
+            v3 = top_vertices[i + rect_h, j]
+            triangles.extend([[v2, v1, v0], [v3, v2, v0]])
+
+        non_flat_i, non_flat_j = np.nonzero(quad_valid & ~flat_quads)
+        if non_flat_i.size > 0:
+            v0 = top_vertices[non_flat_i, non_flat_j]
+            v1 = top_vertices[non_flat_i, non_flat_j + 1]
+            v2 = top_vertices[non_flat_i + 1, non_flat_j + 1]
+            v3 = top_vertices[non_flat_i + 1, non_flat_j]
+            triangles.extend(
+                np.concatenate(
+                    [
+                        np.stack([v2, v1, v0], axis=1),
+                        np.stack([v3, v2, v0], axis=1),
+                    ],
+                    axis=0,
+                )
+            )
+
+        if not triangles:
+            return np.empty((0, 3, 3), dtype=np.float32)
+
+        return np.asarray(triangles, dtype=np.float32)
+
+    def _create_greedy_bottom_triangles(
+        self, bottom_vertices: np.ndarray, quad_valid: np.ndarray
+    ) -> np.ndarray:
+        """Create bottom triangles, merging adjacent valid rectangles."""
+        triangles = []
+        values = np.zeros_like(quad_valid, dtype=np.float32)
+
+        for i, j, rect_h, rect_w in self._greedy_rectangles(quad_valid, values):
+            v0 = bottom_vertices[i, j]
+            v1 = bottom_vertices[i, j + rect_w]
+            v2 = bottom_vertices[i + rect_h, j + rect_w]
+            v3 = bottom_vertices[i + rect_h, j]
+            triangles.extend([[v0, v1, v2], [v0, v2, v3]])
+
+        if not triangles:
+            return np.empty((0, 3, 3), dtype=np.float32)
+
+        return np.asarray(triangles, dtype=np.float32)
+
+    def _greedy_rectangles(
+        self, mask: np.ndarray, values: np.ndarray
+    ) -> List[Tuple[int, int, int, int]]:
+        """Group equal-value true cells into maximal rectangles."""
+        rows, cols = mask.shape
+        visited = np.zeros_like(mask, dtype=bool)
+        rectangles = []
+
+        for i in range(rows):
+            for j in range(cols):
+                if visited[i, j] or not mask[i, j]:
+                    continue
+
+                value = values[i, j]
+                rect_w = 1
+                while (
+                    j + rect_w < cols
+                    and not visited[i, j + rect_w]
+                    and mask[i, j + rect_w]
+                    and values[i, j + rect_w] == value
+                ):
+                    rect_w += 1
+
+                rect_h = 1
+                while i + rect_h < rows:
+                    row_slice = slice(j, j + rect_w)
+                    if np.any(visited[i + rect_h, row_slice]):
+                        break
+                    if not np.all(mask[i + rect_h, row_slice]):
+                        break
+                    if not np.all(values[i + rect_h, row_slice] == value):
+                        break
+                    rect_h += 1
+
+                visited[i : i + rect_h, j : j + rect_w] = True
+                rectangles.append((i, j, rect_h, rect_w))
+
+        return rectangles
 
     def _smooth_mesh(
         self, mesh: trimesh.Trimesh, iterations: int = 2

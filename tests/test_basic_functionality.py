@@ -167,6 +167,32 @@ class TestBasicFunctionality:
                 # Cleanup
                 if Path(tmp_file.name).exists():
                     os.unlink(tmp_file.name)
+
+    def test_flat_stl_uses_greedy_mesh_reduction(self):
+        """Flat height maps should merge large coplanar regions."""
+        from bananaforge.output.exporter import ModelExporter
+        from bananaforge.output.stl_generator import STLGenerator
+
+        height_map = torch.ones(1, 1, 10, 10)
+        generator = STLGenerator()
+
+        with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp_file:
+            try:
+                mesh = generator.generate_stl(
+                    height_map=height_map,
+                    output_path=tmp_file.name,
+                    physical_size=20.0,
+                    smooth_mesh=False,
+                )
+
+                old_triangle_estimate = ModelExporter.estimate_triangle_count(10, 10)
+
+                assert len(mesh.faces) < old_triangle_estimate // 2
+                assert Path(tmp_file.name).exists()
+
+            finally:
+                if Path(tmp_file.name).exists():
+                    os.unlink(tmp_file.name)
                     
     def test_instruction_generation(self, material_db, device):
         """Test swap instruction generation."""
