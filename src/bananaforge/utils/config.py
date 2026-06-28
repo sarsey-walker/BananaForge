@@ -49,14 +49,16 @@ class ConfigManager:
                 "final_temperature": 0.1,
                 "temperature_decay": "linear",
                 "early_stopping_patience": 6000,
-                "device": "cuda",
+                "device": "auto",
             },
             "model": {
                 "layer_height": 0.08,
+                "initial_layer_height": 0.16,
                 "base_height": 0.16,
                 "max_layers": 15,
                 "physical_size": 180.0,
                 "resolution": 512,
+                "nozzle_diameter": 0.4,
             },
             "materials": {
                 "max_materials": 4,
@@ -214,7 +216,7 @@ class ConfigManager:
             temperature_decay=opt_config.get("temperature_decay", "linear"),
             layer_height=self.get("model.layer_height", 0.08),
             max_layers=self.get("model.max_layers", 15),
-            device=opt_config.get("device", "cuda"),
+            device=opt_config.get("device", "auto"),
             early_stopping_patience=opt_config.get("early_stopping_patience", 100),
             loss_weights=loss_weights,
         )
@@ -223,7 +225,11 @@ class ConfigManager:
     def from_env(cls) -> "ConfigManager":
         """Create configuration manager from environment variables."""
         config_manager = cls()
+        config_manager.apply_env_overrides()
+        return config_manager
 
+    def apply_env_overrides(self) -> None:
+        """Apply supported environment variable overrides to this config."""
         # Override with environment variables
         env_mappings = {
             "BANANAFORGE_DEVICE": "optimization.device",
@@ -249,9 +255,7 @@ class ConfigManager:
                 except ValueError:
                     pass  # Keep as string
 
-                config_manager.set(config_key, value)
-
-        return config_manager
+                self.set(config_key, value)
 
     def validate_config(self) -> tuple[bool, list[str]]:
         """Validate current configuration.

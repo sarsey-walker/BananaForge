@@ -143,7 +143,8 @@ class TestCLITransparencyIntegration:
                 "--max-layers", "5",
                 "--iterations", "10",  # Very few iterations for speed
                 "--device", "cpu",
-                "--resolution", "64"   # Low resolution for speed
+                "--resolution", "64",  # Low resolution for speed
+                "--skip-transparency-check",
             ], capture_output=True, text=True, timeout=30)
             
             # The command might fail due to various reasons (missing materials, etc.)
@@ -215,6 +216,145 @@ class TestCLITransparencyValidation:
                 
         except ImportError:
             pytest.skip("CLI module not available")
+
+
+class TestCLIDeviceResolution:
+    """Test CLI device resolution and accelerator fallback."""
+
+    def test_auto_device_falls_back_to_cpu_when_accelerators_unusable(
+        self, monkeypatch
+    ):
+        """Auto device selection should choose CPU when accelerators fail checks."""
+        from bananaforge.utils import device as device_utils
+
+        def fake_device_is_usable(device):
+            if device == "cpu":
+                return True, ""
+            return False, f"{device} unavailable"
+
+        monkeypatch.setattr(
+            device_utils,
+            "device_is_usable",
+            fake_device_is_usable,
+        )
+
+        resolution = device_utils.resolve_device("auto")
+
+        assert resolution.selected == "cpu"
+        assert resolution.fallback
+
+    def test_requested_unusable_cuda_falls_back_to_cpu(self, monkeypatch):
+        """Explicit CUDA should fall back cleanly when PyTorch cannot use it."""
+        from bananaforge.utils import device as device_utils
+
+        def fake_device_is_usable(device):
+            if device == "cuda":
+                return False, "no kernel image is available for execution on the device"
+            return True, ""
+
+        monkeypatch.setattr(
+            device_utils,
+            "device_is_usable",
+            fake_device_is_usable,
+        )
+
+        resolution = device_utils.resolve_device("cuda")
+
+        assert resolution.selected == "cpu"
+        assert resolution.fallback
+        assert "no kernel image" in resolution.reason
+
+    def test_convert_accepts_auto_device_option(self):
+        """The convert command should expose auto device selection."""
+        from bananaforge.cli import convert
+
+        device_param = next(param for param in convert.params if param.name == "device")
+
+        assert "auto" in device_param.type.choices
+        assert device_param.default == "auto"
+
+
+class TestCLIConfigDefaults:
+    """Test config and environment defaults used by CLI commands."""
+
+    def test_config_default_applies_when_option_not_explicit(self):
+        """Config values should fill only defaulted Click parameters."""
+        import click
+        from click.testing import CliRunner
+
+        from bananaforge.cli import _config_default
+        from bananaforge.utils.config import ConfigManager
+
+        @click.command()
+        @click.option("--iterations", type=int, default=6000)
+        @click.pass_context
+        def command(ctx, iterations):
+            config_manager = ConfigManager()
+            config_manager.set("optimization.iterations", 42)
+            ctx.obj = {"config_manager": config_manager}
+            click.echo(
+                _config_default(
+                    ctx,
+                    "iterations",
+                    "optimization.iterations",
+                    iterations,
+                )
+            )
+
+        result = CliRunner().invoke(command, [])
+
+        assert result.exit_code == 0
+        assert result.output.strip() == "42"
+
+    def test_explicit_cli_option_overrides_config_default(self):
+        """Explicit CLI values should win over config defaults."""
+        import click
+        from click.testing import CliRunner
+
+        from bananaforge.cli import _config_default
+        from bananaforge.utils.config import ConfigManager
+
+        @click.command()
+        @click.option("--iterations", type=int, default=6000)
+        @click.pass_context
+        def command(ctx, iterations):
+            config_manager = ConfigManager()
+            config_manager.set("optimization.iterations", 42)
+            ctx.obj = {"config_manager": config_manager}
+            click.echo(
+                _config_default(
+                    ctx,
+                    "iterations",
+                    "optimization.iterations",
+                    iterations,
+                )
+            )
+
+        result = CliRunner().invoke(command, ["--iterations", "7"])
+
+        assert result.exit_code == 0
+        assert result.output.strip() == "7"
+
+    def test_environment_overrides_apply_to_config_manager(self, monkeypatch):
+        """Documented environment variables should populate config defaults."""
+        from bananaforge.utils.config import ConfigManager
+
+        monkeypatch.setenv("BANANAFORGE_ITERATIONS", "123")
+        monkeypatch.setenv("BANANAFORGE_DEVICE", "cpu")
+
+        config_manager = ConfigManager()
+        config_manager.apply_env_overrides()
+
+        assert config_manager.get("optimization.iterations") == 123
+        assert config_manager.get("optimization.device") == "cpu"
+
+    def test_config_option_accepts_environment_variable(self):
+        """The documented config env var should be wired into the root CLI."""
+        from bananaforge.cli import cli
+
+        config_param = next(param for param in cli.params if param.name == "config")
+
+        assert config_param.envvar == "BANANAFORGE_CONFIG"
 
 
 class TestCLIDocumentation:

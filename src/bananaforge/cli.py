@@ -26,6 +26,7 @@ from .materials.matcher import ColorMatcher
 from .output.exporter import ModelExporter
 from .utils.color import hex_to_rgb
 from .utils.config import Config, ConfigManager
+from .utils.device import resolve_device
 from .utils.logging import setup_logging
 
 # Rich console setup
@@ -39,11 +40,35 @@ except ImportError:
     __version__ = "unknown"
 
 
+def _config_default(ctx, parameter_name: str, config_key, current_value):
+    """Use config value only when the CLI option was not explicitly supplied."""
+    if ctx.get_parameter_source(parameter_name) != click.core.ParameterSource.DEFAULT:
+        return current_value
+
+    config_manager = ctx.obj.get("config_manager") if ctx.obj else None
+    if not config_manager:
+        return current_value
+
+    config_keys = config_key if isinstance(config_key, (list, tuple)) else (config_key,)
+    value = current_value
+    for key in config_keys:
+        next_value = config_manager.get(key, None)
+        if next_value is not None:
+            value = next_value
+            break
+    if isinstance(value, (list, tuple)) and isinstance(current_value, str):
+        return ",".join(str(item) for item in value)
+    return value
+
+
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 @click.option(
-    "--config", type=click.Path(exists=True), help="Path to configuration file"
+    "--config",
+    type=click.Path(exists=True),
+    envvar="BANANAFORGE_CONFIG",
+    help="Path to configuration file",
 )
 @click.pass_context
 def cli(ctx, verbose: bool, quiet: bool, config):
@@ -56,10 +81,17 @@ def cli(ctx, verbose: bool, quiet: bool, config):
         log_level = logging.ERROR
     elif verbose:
         log_level = logging.DEBUG
+    elif os.getenv("BANANAFORGE_LOG_LEVEL"):
+        log_level = getattr(
+            logging,
+            os.getenv("BANANAFORGE_LOG_LEVEL", "").upper(),
+            logging.INFO,
+        )
     setup_logging(level=log_level)
 
     # Load configuration
     ctx.obj["config_manager"] = ConfigManager(config)
+    ctx.obj["config_manager"].apply_env_overrides()
     ctx.obj["config"] = ctx.obj["config_manager"].get_config()
 
     # Store context
@@ -105,8 +137,8 @@ def cli(ctx, verbose: bool, quiet: bool, config):
 )
 @click.option(
     "--device",
-    type=click.Choice(["cpu", "cuda", "mps"]),
-    default="cuda",
+    type=click.Choice(["auto", "cpu", "cuda", "mps"]),
+    default="auto",
     help="Device for computation",
 )
 @click.option(
@@ -230,6 +262,97 @@ def convert(
     try:
         logger = logging.getLogger(__name__)
         logger.info(f"Starting conversion of {input_image}")
+
+        output = _config_default(ctx, "output", "output.directory", output)
+        max_materials = _config_default(
+            ctx, "max_materials", "materials.max_materials", max_materials
+        )
+        max_layers = _config_default(ctx, "max_layers", "model.max_layers", max_layers)
+        layer_height = _config_default(
+            ctx, "layer_height", "model.layer_height", layer_height
+        )
+        initial_layer_height = _config_default(
+            ctx,
+            "initial_layer_height",
+            ("model.initial_layer_height", "model.base_height"),
+            initial_layer_height,
+        )
+        nozzle_diameter = _config_default(
+            ctx, "nozzle_diameter", "model.nozzle_diameter", nozzle_diameter
+        )
+        physical_size = _config_default(
+            ctx, "physical_size", "model.physical_size", physical_size
+        )
+        iterations = _config_default(
+            ctx, "iterations", "optimization.iterations", iterations
+        )
+        learning_rate = _config_default(
+            ctx, "learning_rate", "optimization.learning_rate", learning_rate
+        )
+        device = _config_default(ctx, "device", "optimization.device", device)
+        export_format = _config_default(
+            ctx, "export_format", "export.default_formats", export_format
+        )
+        project_name = _config_default(
+            ctx, "project_name", "export.project_name", project_name
+        )
+        resolution = _config_default(ctx, "resolution", "model.resolution", resolution)
+        preview = _config_default(ctx, "preview", "export.generate_preview", preview)
+        enable_transparency = _config_default(
+            ctx, "enable_transparency", "transparency.enabled", enable_transparency
+        )
+        opacity_levels = _config_default(
+            ctx, "opacity_levels", "transparency.opacity_levels", opacity_levels
+        )
+        optimize_base_layers = _config_default(
+            ctx,
+            "optimize_base_layers",
+            "transparency.base_layer_optimization",
+            optimize_base_layers,
+        )
+        enable_gradients = _config_default(
+            ctx, "enable_gradients", "transparency.gradient_processing", enable_gradients
+        )
+        transparency_threshold = _config_default(
+            ctx,
+            "transparency_threshold",
+            "transparency.min_savings_threshold",
+            transparency_threshold,
+        )
+        mixed_precision = _config_default(
+            ctx, "mixed_precision", "optimization.mixed_precision", mixed_precision
+        )
+        include_3mf_metadata = _config_default(
+            ctx,
+            "include_3mf_metadata",
+            "export.include_transparency_metadata",
+            include_3mf_metadata,
+        )
+
+        requested_device = device
+        device_resolution = resolve_device(device)
+        device = device_resolution.selected
+        if requested_device == "auto":
+            if device_resolution.failed_devices:
+                failures = "; ".join(
+                    f"{failed_device}: {reason}"
+                    for failed_device, reason in device_resolution.failed_devices
+                )
+                click.echo(f"Using {device} device ({failures})", err=True)
+            logger.info("Resolved auto device to %s", device)
+        elif device_resolution.fallback:
+            click.echo(
+                f"Warning: requested device '{requested_device}' is not usable "
+                f"({device_resolution.reason}); falling back to CPU.",
+                err=True,
+            )
+            logger.warning(
+                "Requested device %s is not usable; using %s",
+                requested_device,
+                device,
+            )
+        else:
+            logger.info("Using %s device", device)
 
         # Parse and validate export formats
         valid_export_formats = ["stl", "3mf", "instructions", "hueforge", "prusa", "bambu", "cost_report", "transparency_analysis"]
@@ -1103,7 +1226,7 @@ def init_config(output, transparency_optimized):
                     "mixed_precision": True,
                     "discrete_validation_interval": 50,
                     "early_stopping_patience": 150,
-                    "device": "cuda"
+                    "device": "auto"
                 },
                 "model": {
                     "layer_height": 0.2,
