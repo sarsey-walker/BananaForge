@@ -69,6 +69,7 @@ class ConfigManager:
                 "default_formats": ["stl", "instructions", "cost_report"],
                 "project_name": "bananaforge_model",
                 "generate_preview": False,
+                "max_triangles": None,
             },
             "loss_weights": {
                 "perceptual": 1.0,
@@ -239,6 +240,7 @@ class ConfigManager:
             "BANANAFORGE_PHYSICAL_SIZE": "model.physical_size",
             "BANANAFORGE_LAYER_HEIGHT": "model.layer_height",
             "BANANAFORGE_OUTPUT_DIR": "output.directory",
+            "BANANAFORGE_MAX_TRIANGLES": "export.max_triangles",
         }
 
         for env_var, config_key in env_mappings.items():

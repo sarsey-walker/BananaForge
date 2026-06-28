@@ -65,6 +65,7 @@ bananaforge convert image.jpg --config my_config.json
   "export": {
     "default_formats": ["stl", "instructions", "cost_report", "transparency_analysis"],
     "project_name": "bananaforge_model",
+    "max_triangles": null,
     "generate_preview": false,
     "include_transparency_metadata": true
   },
@@ -382,6 +383,7 @@ Set system-wide defaults with environment variables:
 | `BANANAFORGE_PHYSICAL_SIZE` | Default physical size | `120` |
 | `BANANAFORGE_LAYER_HEIGHT` | Default layer height | `0.15` |
 | `BANANAFORGE_OUTPUT_DIR` | Default output directory | `./my_outputs` |
+| `BANANAFORGE_MAX_TRIANGLES` | Export mesh triangle budget | `2000000` |
 
 ### Setting Environment Variables
 

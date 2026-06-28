@@ -67,6 +67,7 @@ bananaforge convert INPUT_IMAGE [OPTIONS]
 - `--initial-layer-height FLOAT` - Initial layer height in mm (default: 0.16)
 - `--nozzle-diameter FLOAT` - Nozzle diameter in mm (default: 0.4)
 - `--physical-size FLOAT` - Size of longest dimension in mm (default: 180.0)
+- `--max-triangles INT` - Maximum triangle budget for exported meshes; downscales export resolution if needed
 - `--resolution INT` - Processing resolution in pixels (default: 512)
 
 #### Optimization Settings

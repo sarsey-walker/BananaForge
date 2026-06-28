@@ -199,8 +199,8 @@ print(f"Materials used: {result['materials_count']}")
 
 **Large file sizes**
 ```bash
-# Reduce mesh resolution
-bananaforge convert input.jpg --max-size 200 --export-format 3mf
+# Reduce export mesh resolution
+bananaforge convert input.jpg --max-triangles 2000000 --export-format 3mf
 ```
 
 **Validation errors**
@@ -221,7 +221,7 @@ bananaforge export-materials --output debug_materials.csv
 ### Performance Optimization
 
 For large models:
-- Use `--max-size` to limit mesh resolution
+- Use `--max-triangles` to limit mesh resolution
 - Reduce `--max-layers` for simpler geometry
 - Enable compression with larger images
 

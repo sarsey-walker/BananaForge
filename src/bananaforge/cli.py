@@ -61,6 +61,17 @@ def _config_default(ctx, parameter_name: str, config_key, current_value):
     return value
 
 
+def _format_bytes(size_bytes: int) -> str:
+    """Format byte sizes for CLI output."""
+    units = ("B", "KB", "MB", "GB")
+    size = float(size_bytes)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
@@ -128,6 +139,12 @@ def cli(ctx, verbose: bool, quiet: bool, config):
     type=float,
     default=180.0,
     help="Physical size of longest dimension in mm",
+)
+@click.option(
+    "--max-triangles",
+    type=int,
+    default=None,
+    help="Maximum triangle budget for exported meshes; downscales export resolution if needed",
 )
 @click.option(
     "--iterations", type=int, default=6000, help="Number of optimization iterations"
@@ -236,6 +253,7 @@ def convert(
     initial_layer_height,
     nozzle_diameter,
     physical_size,
+    max_triangles,
     iterations,
     learning_rate,
     device,
@@ -282,6 +300,9 @@ def convert(
         )
         physical_size = _config_default(
             ctx, "physical_size", "model.physical_size", physical_size
+        )
+        max_triangles = _config_default(
+            ctx, "max_triangles", "export.max_triangles", max_triangles
         )
         iterations = _config_default(
             ctx, "iterations", "optimization.iterations", iterations
@@ -795,6 +816,37 @@ def convert(
             f"Final material assignments resolution: {final_material_assignments_full.shape}"
         )
 
+        estimated_triangles = ModelExporter.estimate_triangle_count(target_h, target_w)
+        estimated_stl_size = ModelExporter.estimate_binary_stl_size_bytes(
+            estimated_triangles
+        )
+        click.echo(
+            "Estimated export mesh: "
+            f"{estimated_triangles:,} triangles "
+            f"(~{_format_bytes(estimated_stl_size)} binary STL)"
+        )
+
+        if max_triangles is not None:
+            if max_triangles <= 0:
+                raise click.ClickException("--max-triangles must be positive")
+
+            if estimated_triangles > max_triangles:
+                limited_h, limited_w = ModelExporter.fit_shape_to_triangle_limit(
+                    target_h, target_w, max_triangles
+                )
+                limited_triangles = ModelExporter.estimate_triangle_count(
+                    limited_h, limited_w
+                )
+                limited_size = ModelExporter.estimate_binary_stl_size_bytes(
+                    limited_triangles
+                )
+                click.echo(
+                    "Export mesh exceeds --max-triangles; export resolution will be "
+                    f"downscaled to {limited_w}x{limited_h} "
+                    f"({limited_triangles:,} triangles, "
+                    f"~{_format_bytes(limited_size)} binary STL)."
+                )
+
         # Create output directory
         output_path = Path(output)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -804,6 +856,7 @@ def convert(
         exporter = ModelExporter(
             layer_height=layer_height,
             initial_layer_height=initial_layer_height,
+            nozzle_diameter=nozzle_diameter,
             physical_size=physical_size,
             material_db=material_db,
             device=device,
@@ -819,6 +872,7 @@ def convert(
             export_formats=list(export_format_list),
             bambu_compatible=bambu_compatible,
             source_image_path=str(input_image),
+            max_triangles=max_triangles,
         )
 
         if "stl" in generated_files:

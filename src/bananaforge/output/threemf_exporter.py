@@ -1590,7 +1590,7 @@ class ThreeMFExporter:
         else:
             heightmap_torch = torch.tensor(heightmap)
 
-        max_triangles = self._max_supported_triangles()
+        max_triangles = self._max_supported_triangles(optimization_results)
         estimated_triangles = self._estimate_heightmap_triangles(heightmap_torch)
         stl_path = optimization_results.get('stl_path')
 
@@ -1674,11 +1674,14 @@ class ThreeMFExporter:
             'heightmap_shape': heightmap_torch.shape
         }
 
-    def _max_supported_triangles(self) -> int:
+    def _max_supported_triangles(self, optimization_results: Optional[Dict[str, Any]] = None) -> int:
         """Return the maximum triangle count allowed for in-memory 3MF export."""
         import os
 
-        raw_limit = os.getenv("BANANAFORGE_MAX_3MF_TRIANGLES", "2000000")
+        if optimization_results and optimization_results.get('max_triangles') is not None:
+            raw_limit = str(optimization_results['max_triangles'])
+        else:
+            raw_limit = os.getenv("BANANAFORGE_MAX_3MF_TRIANGLES", "2000000")
         try:
             return max(1, int(raw_limit))
         except ValueError:

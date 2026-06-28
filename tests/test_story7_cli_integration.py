@@ -273,6 +273,14 @@ class TestCLIDeviceResolution:
         assert "auto" in device_param.type.choices
         assert device_param.default == "auto"
 
+    def test_convert_exposes_mesh_triangle_budget_option(self):
+        """The convert command should expose an export triangle budget."""
+        from bananaforge.cli import convert
+
+        param_names = [param.name for param in convert.params]
+
+        assert "max_triangles" in param_names
+
 
 class TestCLIConfigDefaults:
     """Test config and environment defaults used by CLI commands."""
@@ -341,12 +349,14 @@ class TestCLIConfigDefaults:
 
         monkeypatch.setenv("BANANAFORGE_ITERATIONS", "123")
         monkeypatch.setenv("BANANAFORGE_DEVICE", "cpu")
+        monkeypatch.setenv("BANANAFORGE_MAX_TRIANGLES", "500000")
 
         config_manager = ConfigManager()
         config_manager.apply_env_overrides()
 
         assert config_manager.get("optimization.iterations") == 123
         assert config_manager.get("optimization.device") == "cpu"
+        assert config_manager.get("export.max_triangles") == 500000
 
     def test_config_option_accepts_environment_variable(self):
         """The documented config env var should be wired into the root CLI."""

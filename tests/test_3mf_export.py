@@ -232,6 +232,46 @@ class TestModelExporterOutputOrdering:
         assert (tmp_path / "ordered_instructions.txt").exists()
         assert (tmp_path / "ordered_instructions.csv").exists()
 
+    def test_triangle_estimator_matches_binary_stl_size(self):
+        """Estimator should match the current full-heightmap mesh formula."""
+        triangles = ModelExporter.estimate_triangle_count(10, 20)
+
+        assert triangles == 4 * 9 * 19 + 4 * (9 + 19)
+        assert ModelExporter.estimate_binary_stl_size_bytes(triangles) == (
+            84 + triangles * 50
+        )
+
+    def test_max_triangles_downscales_export_mesh(self, tmp_path, monkeypatch):
+        """A triangle budget should downscale tensors before mesh generation."""
+        material_db = DefaultMaterials.create_bambu_basic_pla()
+        material_ids = material_db.get_material_ids()[:2]
+        exporter = ModelExporter(material_db=material_db)
+        captured_shape = {}
+
+        def capture_stl_generation(height_map, output_path, physical_size, **kwargs):
+            captured_shape["height_map"] = height_map.shape[-2:]
+            Path(output_path).write_bytes(b"stub")
+
+        monkeypatch.setattr(exporter.stl_generator, "generate_stl", capture_stl_generation)
+
+        height_map = torch.ones(1, 1, 40, 60)
+        material_assignments = torch.zeros(2, 40, 60, dtype=torch.long)
+
+        exporter.export_complete_model(
+            height_map=height_map,
+            material_assignments=material_assignments,
+            material_database=material_db,
+            material_ids=material_ids,
+            output_dir=tmp_path,
+            project_name="limited",
+            export_formats=["stl"],
+            max_triangles=400,
+        )
+
+        limited_h, limited_w = captured_shape["height_map"]
+        assert (limited_h, limited_w) != (40, 60)
+        assert ModelExporter.estimate_triangle_count(limited_h, limited_w) <= 400
+
 
 class Test3MFPerLayerMaterialAssignment:
     """Test Story 7.2: Per-Layer Material and Color Assignment.
