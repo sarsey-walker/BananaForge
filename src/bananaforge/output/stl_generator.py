@@ -21,6 +21,7 @@ class STLGenerator:
         initial_layer_height: float = 0.16,
         nozzle_diameter: float = 0.4,
         base_height: float = 0.24,
+        bottom_mode: str = "simplified",
     ):
         """Initialize STL generator.
 
@@ -29,11 +30,13 @@ class STLGenerator:
             initial_layer_height: Height of first layer in mm (default: 0.16mm)
             nozzle_diameter: Nozzle diameter in mm (default: 0.4mm)
             base_height: Background height in mm
+            bottom_mode: Bottom face generation mode: full, simplified, or none
         """
         self.layer_height = layer_height
         self.initial_layer_height = initial_layer_height
         self.nozzle_diameter = nozzle_diameter
         self.base_height = base_height 
+        self.bottom_mode = self._validate_bottom_mode(bottom_mode)
         self.logger = logging.getLogger(__name__)
 
     def generate_stl(
@@ -43,6 +46,7 @@ class STLGenerator:
         physical_size: float = 100.0,
         smooth_mesh: bool = True,
         add_base: bool = True,
+        bottom_mode: Optional[str] = None,
     ) -> trimesh.Trimesh:
         """Generate STL file from height map.
 
@@ -53,10 +57,13 @@ class STLGenerator:
             physical_size: Scale factor for mesh resolution
             smooth_mesh: Whether to apply mesh smoothing
             add_base: Whether to add a base plate
+            bottom_mode: Bottom face generation mode: full, simplified, or none
 
         Returns:
             Generated trimesh object
         """
+        resolved_bottom_mode = self._resolve_bottom_mode(bottom_mode, add_base)
+
         # Convert height map to numpy
         height_array = height_map.squeeze().cpu().numpy()
 
@@ -75,7 +82,11 @@ class STLGenerator:
         physical_height_map = height_array * self.layer_height + self.initial_layer_height
 
         mesh = self._create_mesh_from_heightmap(
-            physical_height_map, physical_width, physical_height, physical_size
+            physical_height_map,
+            physical_width,
+            physical_height,
+            physical_size,
+            bottom_mode=resolved_bottom_mode,
         )
 
         # Apply smoothing if requested
@@ -93,9 +104,16 @@ class STLGenerator:
         return mesh
 
     def _create_mesh_from_heightmap(
-        self, height_map: np.ndarray, width: float, height: float, physical_size: float, alpha_mask: Optional[np.ndarray] = None
+        self,
+        height_map: np.ndarray,
+        width: float,
+        height: float,
+        physical_size: float,
+        alpha_mask: Optional[np.ndarray] = None,
+        bottom_mode: Optional[str] = None,
     ) -> trimesh.Trimesh:
         """Create 3D mesh from 2D height map with optional alpha mask support."""
+        bottom_mode = self._validate_bottom_mode(bottom_mode or self.bottom_mode)
         H, W = height_map.shape
         if alpha_mask is None:
             alpha_mask = np.ones((H, W), dtype=bool)
@@ -133,9 +151,16 @@ class STLGenerator:
         top_triangles = self._create_greedy_top_triangles(
             top_vertices, quad_valid
         )
-        bottom_triangles = self._create_greedy_bottom_triangles(
-            bottom_vertices, quad_valid
-        )
+        if bottom_mode == "none":
+            bottom_triangles = np.empty((0, 3, 3), dtype=np.float32)
+        elif bottom_mode == "full":
+            bottom_triangles = self._create_full_bottom_triangles(
+                bottom_vertices, quad_valid
+            )
+        else:
+            bottom_triangles = self._create_greedy_bottom_triangles(
+                bottom_vertices, quad_valid
+            )
         
         # --- Side Walls ---
         side_triangles_list = []
@@ -250,6 +275,24 @@ class STLGenerator:
         mesh.merge_vertices()
         return mesh
 
+    @staticmethod
+    def _validate_bottom_mode(bottom_mode: str) -> str:
+        """Validate and normalize the bottom face generation mode."""
+        valid_modes = {"full", "simplified", "none"}
+        if bottom_mode not in valid_modes:
+            raise ValueError(
+                f"bottom_mode must be one of {sorted(valid_modes)}, got {bottom_mode!r}"
+            )
+        return bottom_mode
+
+    def _resolve_bottom_mode(
+        self, bottom_mode: Optional[str], add_base: bool
+    ) -> str:
+        """Resolve legacy add_base with the explicit bottom mode option."""
+        if not add_base:
+            return "none"
+        return self._validate_bottom_mode(bottom_mode or self.bottom_mode)
+
     def _create_greedy_top_triangles(
         self, top_vertices: np.ndarray, quad_valid: np.ndarray
     ) -> np.ndarray:
@@ -313,6 +356,27 @@ class STLGenerator:
             return np.empty((0, 3, 3), dtype=np.float32)
 
         return np.asarray(triangles, dtype=np.float32)
+
+    def _create_full_bottom_triangles(
+        self, bottom_vertices: np.ndarray, quad_valid: np.ndarray
+    ) -> np.ndarray:
+        """Create one pair of bottom triangles per valid cell."""
+        valid_i, valid_j = np.nonzero(quad_valid)
+        if valid_i.size == 0:
+            return np.empty((0, 3, 3), dtype=np.float32)
+
+        v0 = bottom_vertices[valid_i, valid_j]
+        v1 = bottom_vertices[valid_i, valid_j + 1]
+        v2 = bottom_vertices[valid_i + 1, valid_j + 1]
+        v3 = bottom_vertices[valid_i + 1, valid_j]
+
+        return np.concatenate(
+            [
+                np.stack([v0, v1, v2], axis=1),
+                np.stack([v0, v2, v3], axis=1),
+            ],
+            axis=0,
+        ).astype(np.float32, copy=False)
 
     def _greedy_rectangles(
         self, mask: np.ndarray, values: np.ndarray
@@ -533,6 +597,7 @@ class STLGenerator:
         create_boundaries: bool = True,
         ensure_manifold: bool = True,
         clean_edges: bool = True,
+        bottom_mode: Optional[str] = None,
     ) -> trimesh.Trimesh:
         """Generate STL file from height map with alpha channel support.
         
@@ -545,11 +610,13 @@ class STLGenerator:
             create_boundaries: Whether to create proper boundaries around transparent regions
             ensure_manifold: Whether to ensure the resulting mesh is manifold
             clean_edges: Whether to clean edges at transparency boundaries
+            bottom_mode: Bottom face generation mode: full, simplified, or none
             
         Returns:
             Generated trimesh object with alpha channel support
         """
         # Convert tensors to numpy
+        resolved_bottom_mode = self._validate_bottom_mode(bottom_mode or self.bottom_mode)
         height_array = height_map.squeeze().cpu().numpy()
         alpha_array = alpha_mask.cpu().numpy()
         
@@ -567,14 +634,19 @@ class STLGenerator:
         
         # Create mesh with alpha mask
         mesh = self._create_mesh_from_heightmap(
-            physical_height_map, physical_width, physical_height, physical_size, alpha_array
+            physical_height_map,
+            physical_width,
+            physical_height,
+            physical_size,
+            alpha_array,
+            bottom_mode=resolved_bottom_mode,
         )
         
         # Post-process mesh for alpha channel support
         if create_boundaries:
             mesh = self._create_alpha_boundaries(mesh, alpha_array, physical_size)
         
-        if ensure_manifold:
+        if ensure_manifold and resolved_bottom_mode != "none":
             mesh = self._ensure_manifold_mesh(mesh)
         
         if clean_edges:

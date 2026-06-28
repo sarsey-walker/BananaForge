@@ -70,6 +70,7 @@ class ConfigManager:
                 "project_name": "bananaforge_model",
                 "generate_preview": False,
                 "max_triangles": None,
+                "bottom_mode": "simplified",
             },
             "loss_weights": {
                 "perceptual": 1.0,
@@ -241,6 +242,7 @@ class ConfigManager:
             "BANANAFORGE_LAYER_HEIGHT": "model.layer_height",
             "BANANAFORGE_OUTPUT_DIR": "output.directory",
             "BANANAFORGE_MAX_TRIANGLES": "export.max_triangles",
+            "BANANAFORGE_BOTTOM_MODE": "export.bottom_mode",
         }
 
         for env_var, config_key in env_mappings.items():

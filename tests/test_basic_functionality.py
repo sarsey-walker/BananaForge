@@ -193,6 +193,39 @@ class TestBasicFunctionality:
             finally:
                 if Path(tmp_file.name).exists():
                     os.unlink(tmp_file.name)
+
+    def test_stl_bottom_mode_none_removes_bottom_faces(self):
+        """Skipping the bottom face should reduce mesh faces for flat exports."""
+        from bananaforge.output.stl_generator import STLGenerator
+
+        height_map = torch.ones(1, 1, 10, 10)
+        generator = STLGenerator()
+
+        with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as simplified_file:
+            with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as open_file:
+                try:
+                    simplified_mesh = generator.generate_stl(
+                        height_map=height_map,
+                        output_path=simplified_file.name,
+                        physical_size=20.0,
+                        smooth_mesh=False,
+                        bottom_mode="simplified",
+                    )
+                    open_mesh = generator.generate_stl(
+                        height_map=height_map,
+                        output_path=open_file.name,
+                        physical_size=20.0,
+                        smooth_mesh=False,
+                        bottom_mode="none",
+                    )
+
+                    assert len(open_mesh.faces) < len(simplified_mesh.faces)
+                    assert not open_mesh.is_watertight
+
+                finally:
+                    for path in (simplified_file.name, open_file.name):
+                        if Path(path).exists():
+                            os.unlink(path)
                     
     def test_instruction_generation(self, material_db, device):
         """Test swap instruction generation."""

@@ -281,6 +281,33 @@ class TestCLIDeviceResolution:
 
         assert "max_triangles" in param_names
 
+    def test_convert_exposes_bottom_mode_option(self):
+        """The convert command should expose bottom face mesh control."""
+        from bananaforge.cli import convert
+
+        bottom_mode_param = next(
+            param for param in convert.params if param.name == "bottom_mode"
+        )
+
+        assert bottom_mode_param.default == "simplified"
+        assert set(bottom_mode_param.type.choices) == {"simplified", "full", "none"}
+
+    def test_preventive_mesh_warning_mentions_size_controls(self, capsys):
+        """Large mesh estimates should warn before conversion does heavy work."""
+        from bananaforge.cli import _echo_mesh_export_estimate
+
+        _echo_mesh_export_estimate(
+            target_h=1000,
+            target_w=1000,
+            max_triangles=None,
+            bottom_mode="simplified",
+        )
+
+        output = capsys.readouterr().out
+        assert "Large mesh estimate" in output
+        assert "--max-triangles" in output
+        assert "--bottom-mode none" in output
+
 
 class TestCLIConfigDefaults:
     """Test config and environment defaults used by CLI commands."""
@@ -350,6 +377,7 @@ class TestCLIConfigDefaults:
         monkeypatch.setenv("BANANAFORGE_ITERATIONS", "123")
         monkeypatch.setenv("BANANAFORGE_DEVICE", "cpu")
         monkeypatch.setenv("BANANAFORGE_MAX_TRIANGLES", "500000")
+        monkeypatch.setenv("BANANAFORGE_BOTTOM_MODE", "none")
 
         config_manager = ConfigManager()
         config_manager.apply_env_overrides()
@@ -357,6 +385,7 @@ class TestCLIConfigDefaults:
         assert config_manager.get("optimization.iterations") == 123
         assert config_manager.get("optimization.device") == "cpu"
         assert config_manager.get("export.max_triangles") == 500000
+        assert config_manager.get("export.bottom_mode") == "none"
 
     def test_config_option_accepts_environment_variable(self):
         """The documented config env var should be wired into the root CLI."""

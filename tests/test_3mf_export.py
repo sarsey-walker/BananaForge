@@ -233,10 +233,16 @@ class TestModelExporterOutputOrdering:
         assert (tmp_path / "ordered_instructions.csv").exists()
 
     def test_triangle_estimator_matches_binary_stl_size(self):
-        """Estimator should match the current full-heightmap mesh formula."""
-        triangles = ModelExporter.estimate_triangle_count(10, 20)
+        """Estimator should include the configured bottom face mode."""
+        triangles = ModelExporter.estimate_triangle_count(10, 20, "full")
+        simplified_triangles = ModelExporter.estimate_triangle_count(
+            10, 20, "simplified"
+        )
+        open_triangles = ModelExporter.estimate_triangle_count(10, 20, "none")
 
         assert triangles == 4 * 9 * 19 + 4 * (9 + 19)
+        assert simplified_triangles == 2 * 9 * 19 + 4 * (9 + 19) + 2
+        assert open_triangles == 2 * 9 * 19 + 4 * (9 + 19)
         assert ModelExporter.estimate_binary_stl_size_bytes(triangles) == (
             84 + triangles * 50
         )
@@ -270,7 +276,9 @@ class TestModelExporterOutputOrdering:
 
         limited_h, limited_w = captured_shape["height_map"]
         assert (limited_h, limited_w) != (40, 60)
-        assert ModelExporter.estimate_triangle_count(limited_h, limited_w) <= 400
+        assert ModelExporter.estimate_triangle_count(
+            limited_h, limited_w, exporter.bottom_mode
+        ) <= 400
 
 
 class Test3MFPerLayerMaterialAssignment:

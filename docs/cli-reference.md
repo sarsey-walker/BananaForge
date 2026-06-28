@@ -68,6 +68,7 @@ bananaforge convert INPUT_IMAGE [OPTIONS]
 - `--nozzle-diameter FLOAT` - Nozzle diameter in mm (default: 0.4)
 - `--physical-size FLOAT` - Size of longest dimension in mm (default: 180.0)
 - `--max-triangles INT` - Maximum triangle budget for exported meshes; downscales export resolution if needed
+- `--bottom-mode [simplified|full|none]` - Bottom face mode for exported meshes (default: `simplified`)
 - `--resolution INT` - Processing resolution in pixels (default: 512)
 
 #### Optimization Settings
@@ -439,6 +440,7 @@ bananaforge convert photo.jpg --config my_config.json
 - `BANANAFORGE_CONFIG`: Path to configuration file
 - `BANANAFORGE_LOG_LEVEL`: Logging level
 - `BANANAFORGE_DEVICE`: Default device
+- `BANANAFORGE_BOTTOM_MODE`: Bottom face mode for exported meshes (`simplified`, `full`, or `none`)
 
 ---
 

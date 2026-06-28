@@ -39,6 +39,10 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+LARGE_MESH_WARNING_TRIANGLES = 2_000_000
+LARGE_MESH_WARNING_BYTES = 100 * 1024 * 1024
+MESH_EXPORT_FORMATS = {"stl", "3mf", "bambu", "prusa", "layer_stls", "preview"}
+
 
 def _config_default(ctx, parameter_name: str, config_key, current_value):
     """Use config value only when the CLI option was not explicitly supplied."""
@@ -70,6 +74,63 @@ def _format_bytes(size_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} GB"
+
+
+def _echo_mesh_export_estimate(
+    target_h: int,
+    target_w: int,
+    max_triangles: Optional[int],
+    bottom_mode: str,
+) -> None:
+    """Print a preventive mesh size estimate before expensive processing."""
+    estimated_triangles = ModelExporter.estimate_triangle_count(
+        target_h, target_w, bottom_mode
+    )
+    estimated_stl_size = ModelExporter.estimate_binary_stl_size_bytes(
+        estimated_triangles
+    )
+    click.echo(
+        "Estimated export mesh: "
+        f"{estimated_triangles:,} triangles "
+        f"(~{_format_bytes(estimated_stl_size)} binary STL, "
+        f"bottom: {bottom_mode})"
+    )
+
+    if (
+        estimated_triangles >= LARGE_MESH_WARNING_TRIANGLES
+        or estimated_stl_size >= LARGE_MESH_WARNING_BYTES
+    ):
+        click.echo(
+            "⚠️  Large mesh estimate: export may require substantial RAM, "
+            "disk space, and slicer time."
+        )
+        click.echo(
+            "   Consider --max-triangles, --bottom-mode none, a larger "
+            "--nozzle-diameter, or a smaller --physical-size."
+        )
+
+    if max_triangles is None:
+        return
+
+    if max_triangles <= 0:
+        raise click.ClickException("--max-triangles must be positive")
+
+    if estimated_triangles <= max_triangles:
+        return
+
+    limited_h, limited_w = ModelExporter.fit_shape_to_triangle_limit(
+        target_h, target_w, max_triangles, bottom_mode
+    )
+    limited_triangles = ModelExporter.estimate_triangle_count(
+        limited_h, limited_w, bottom_mode
+    )
+    limited_size = ModelExporter.estimate_binary_stl_size_bytes(limited_triangles)
+    click.echo(
+        "Export mesh exceeds --max-triangles; export resolution will be "
+        f"downscaled to {limited_w}x{limited_h} "
+        f"({limited_triangles:,} triangles, "
+        f"~{_format_bytes(limited_size)} binary STL)."
+    )
 
 
 @click.group()
@@ -145,6 +206,12 @@ def cli(ctx, verbose: bool, quiet: bool, config):
     type=int,
     default=None,
     help="Maximum triangle budget for exported meshes; downscales export resolution if needed",
+)
+@click.option(
+    "--bottom-mode",
+    type=click.Choice(["simplified", "full", "none"]),
+    default="simplified",
+    help="Bottom face mode for exported meshes: simplified, full, or none",
 )
 @click.option(
     "--iterations", type=int, default=6000, help="Number of optimization iterations"
@@ -254,6 +321,7 @@ def convert(
     nozzle_diameter,
     physical_size,
     max_triangles,
+    bottom_mode,
     iterations,
     learning_rate,
     device,
@@ -304,6 +372,13 @@ def convert(
         max_triangles = _config_default(
             ctx, "max_triangles", "export.max_triangles", max_triangles
         )
+        bottom_mode = _config_default(
+            ctx, "bottom_mode", "export.bottom_mode", bottom_mode
+        )
+        if bottom_mode not in {"simplified", "full", "none"}:
+            raise click.ClickException(
+                "--bottom-mode must be one of: simplified, full, none"
+            )
         iterations = _config_default(
             ctx, "iterations", "optimization.iterations", iterations
         )
@@ -515,6 +590,13 @@ def convert(
         click.echo(
             f"Processing resolution: {processing_w}x{processing_h} (for optimization)"
         )
+        if any(fmt in MESH_EXPORT_FORMATS for fmt in export_format_list):
+            _echo_mesh_export_estimate(
+                target_h=target_h,
+                target_w=target_w,
+                max_triangles=max_triangles,
+                bottom_mode=bottom_mode,
+            )
 
         # Load image at TARGET resolution for heightmap initialization
         target_image = image_processor.load_image(
@@ -816,37 +898,6 @@ def convert(
             f"Final material assignments resolution: {final_material_assignments_full.shape}"
         )
 
-        estimated_triangles = ModelExporter.estimate_triangle_count(target_h, target_w)
-        estimated_stl_size = ModelExporter.estimate_binary_stl_size_bytes(
-            estimated_triangles
-        )
-        click.echo(
-            "Estimated export mesh: "
-            f"{estimated_triangles:,} triangles "
-            f"(~{_format_bytes(estimated_stl_size)} binary STL)"
-        )
-
-        if max_triangles is not None:
-            if max_triangles <= 0:
-                raise click.ClickException("--max-triangles must be positive")
-
-            if estimated_triangles > max_triangles:
-                limited_h, limited_w = ModelExporter.fit_shape_to_triangle_limit(
-                    target_h, target_w, max_triangles
-                )
-                limited_triangles = ModelExporter.estimate_triangle_count(
-                    limited_h, limited_w
-                )
-                limited_size = ModelExporter.estimate_binary_stl_size_bytes(
-                    limited_triangles
-                )
-                click.echo(
-                    "Export mesh exceeds --max-triangles; export resolution will be "
-                    f"downscaled to {limited_w}x{limited_h} "
-                    f"({limited_triangles:,} triangles, "
-                    f"~{_format_bytes(limited_size)} binary STL)."
-                )
-
         # Create output directory
         output_path = Path(output)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -860,6 +911,7 @@ def convert(
             physical_size=physical_size,
             material_db=material_db,
             device=device,
+            bottom_mode=bottom_mode,
         )
 
         generated_files = exporter.export_complete_model(
