@@ -14,7 +14,7 @@ bananaforge [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
 - `--verbose, -v` - Enable verbose logging
 - `--quiet, -q` - Suppress non-error output  
 - `--config PATH` - Path to configuration file
-- `--device DEVICE` - Processing device: `cuda`, `mps`, or `cpu`
+- `--device DEVICE` - Processing device: `auto`, `cuda`, `mps`, or `cpu`
 - `--mixed-precision` - Enable mixed precision for memory efficiency (CUDA only)
 - `--help` - Show help message
 
@@ -72,7 +72,7 @@ bananaforge convert INPUT_IMAGE [OPTIONS]
 #### Optimization Settings
 - `--iterations INT` - Number of optimization iterations (default: 6000)
 - `--learning-rate FLOAT` - Learning rate for optimization (default: 0.01)
-- `--device [cpu|cuda|mps]` - Device for computation (default: cuda)
+- `--device [auto|cpu|cuda|mps]` - Device for computation (default: auto)
 - `--num-init-rounds INT` - Number of rounds for heightmap initialization (default: 8)
 - `--num-init-cluster-layers INT` - Number of layers to cluster the image into (default: -1)
 - `--mixed-precision` - Enable mixed precision for memory efficiency (CUDA only)

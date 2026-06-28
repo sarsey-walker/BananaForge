@@ -66,6 +66,10 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 # Check CUDA version
 nvidia-smi
 
+# If CUDA kernels fail on this GPU/driver, use automatic fallback or CPU
+bananaforge convert image.jpg --device auto
+bananaforge convert image.jpg --device cpu
+
 # Reinstall PyTorch with correct CUDA version
 pip uninstall torch torchvision
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118

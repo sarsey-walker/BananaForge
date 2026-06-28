@@ -39,7 +39,7 @@ bananaforge convert image.jpg --config my_config.json
     "mixed_precision": true,
     "discrete_validation_interval": 50,
     "early_stopping_patience": 100,
-    "device": "cuda"
+    "device": "auto"
   },
   "model": {
     "layer_height": 0.08,
@@ -99,7 +99,7 @@ optimization:
   learning_rate: 0.015
   learning_rate_scheduler: cosine
   mixed_precision: true
-  device: cuda
+  device: auto
 
 model:
   layer_height: 0.15
@@ -144,7 +144,7 @@ Controls the enhanced AI optimization process:
     "discrete_validation_interval": 50,    // Validate discrete loss every N steps
     "early_stopping_patience": 100,        // Stop if no improvement for N steps
     "early_stopping_metric": "discrete",   // "discrete" or "continuous" loss
-    "device": "cuda"                       // "cpu", "cuda", or "mps"
+    "device": "auto"                       // "auto", "cpu", "cuda", or "mps"
   }
 }
 ```
@@ -375,7 +375,7 @@ Set system-wide defaults with environment variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `BANANAFORGE_DEVICE` | Default computation device | `cuda` |
+| `BANANAFORGE_DEVICE` | Default computation device | `auto` |
 | `BANANAFORGE_ITERATIONS` | Default iterations | `1500` |
 | `BANANAFORGE_LEARNING_RATE` | Default learning rate | `0.015` |
 | `BANANAFORGE_MAX_MATERIALS` | Default max materials | `6` |
