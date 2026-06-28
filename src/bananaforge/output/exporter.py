@@ -94,6 +94,72 @@ class ModelExporter:
         generated_files = {}
 
         try:
+            # Generate lightweight outputs first so they survive heavy mesh exports.
+            instructions = None
+            if "instructions" in export_formats:
+                instructions = self.instruction_generator.generate_swap_instructions(
+                    material_assignments=material_assignments,
+                    material_database=material_database,
+                    material_ids=material_ids,
+                )
+
+                instruction_txt_path = output_dir / f"{project_name}_instructions.txt"
+
+                from .instructions import PrintSettings
+
+                print_settings = PrintSettings(
+                    layer_height=self.layer_height,
+                    nozzle_temperature=220,  # Default PLA temperature
+                    bed_temperature=60,
+                    print_speed=50,
+                    infill_percentage=15,
+                    supports=False,
+                    brim=False,
+                )
+
+                self.instruction_generator.export_instructions_to_text(
+                    instructions=instructions,
+                    output_path=instruction_txt_path,
+                    material_database=material_database,
+                    print_settings=print_settings,
+                )
+                generated_files["instructions_txt"] = str(instruction_txt_path)
+
+                instruction_csv_path = output_dir / f"{project_name}_instructions.csv"
+                self.instruction_generator.export_instructions_to_csv(
+                    instructions, instruction_csv_path
+                )
+                generated_files["instructions_csv"] = str(instruction_csv_path)
+
+                self.logger.info(f"Generated {len(instructions)} swap instructions")
+
+            if "cost_report" in export_formats:
+                usage_data = self.cost_calculator.calculate_material_usage(
+                    height_map=height_map,
+                    material_assignments=material_assignments,
+                    material_database=material_database,
+                    material_ids=material_ids,
+                    physical_size=self.physical_size,
+                )
+
+                if instructions is None:
+                    instructions = self.instruction_generator.generate_swap_instructions(
+                        material_assignments, material_database, material_ids
+                    )
+
+                cost_report_path = output_dir / f"{project_name}_cost_report.txt"
+                self.cost_calculator.generate_cost_report(
+                    usage_data=usage_data,
+                    instructions=instructions,
+                    output_path=cost_report_path,
+                )
+                generated_files["cost_report"] = str(cost_report_path)
+
+                cost_json_path = output_dir / f"{project_name}_cost_data.json"
+                with open(cost_json_path, "w") as f:
+                    json.dump(usage_data, f, indent=2)
+                generated_files["cost_data"] = str(cost_json_path)
+
             # 1. Generate main STL file
             if "stl" in export_formats:
                 stl_path = output_dir / f"{project_name}.stl"
@@ -121,7 +187,8 @@ class ModelExporter:
                         'layer_height': self.layer_height,
                         'project_name': project_name
                     },
-                    'source_image_path': source_image_path
+                    'source_image_path': source_image_path,
+                    'stl_path': generated_files.get("stl"),
                 }
                 
                 # Configure 3MF export
@@ -141,45 +208,6 @@ class ModelExporter:
                     self.logger.info(f"Generated 3MF: {threemf_path} ({result['file_size']} bytes)")
                 else:
                     self.logger.error(f"3MF export failed: {result.get('error', 'Unknown error')}")
-
-            # 2. Generate material swap instructions
-            if "instructions" in export_formats:
-                instructions = self.instruction_generator.generate_swap_instructions(
-                    material_assignments=material_assignments,
-                    material_database=material_database,
-                    material_ids=material_ids,
-                )
-
-                # Export instructions in multiple formats
-                instruction_txt_path = output_dir / f"{project_name}_instructions.txt"
-                
-                # Create print settings for instruction export
-                from .instructions import PrintSettings
-                print_settings = PrintSettings(
-                    layer_height=self.layer_height,
-                    nozzle_temperature=220,  # Default PLA temperature
-                    bed_temperature=60,
-                    print_speed=50,
-                    infill_percentage=15,
-                    supports=False,
-                    brim=False,
-                )
-                
-                self.instruction_generator.export_instructions_to_text(
-                    instructions=instructions, 
-                    output_path=instruction_txt_path,
-                    material_database=material_database,
-                    print_settings=print_settings,
-                )
-                generated_files["instructions_txt"] = str(instruction_txt_path)
-
-                instruction_csv_path = output_dir / f"{project_name}_instructions.csv"
-                self.instruction_generator.export_instructions_to_csv(
-                    instructions, instruction_csv_path
-                )
-                generated_files["instructions_csv"] = str(instruction_csv_path)
-
-                self.logger.info(f"Generated {len(instructions)} swap instructions")
 
             # 3. Generate project files
             if "hueforge" in export_formats:
@@ -218,34 +246,6 @@ class ModelExporter:
                     output_path=bambu_path,
                 )
                 generated_files["bambu"] = str(bambu_path)
-
-            # 4. Generate cost analysis
-            if "cost_report" in export_formats:
-                usage_data = self.cost_calculator.calculate_material_usage(
-                    height_map=height_map,
-                    material_assignments=material_assignments,
-                    material_database=material_database,
-                    material_ids=material_ids,
-                    physical_size=self.physical_size,
-                )
-
-                instructions = self.instruction_generator.generate_swap_instructions(
-                    material_assignments, material_database, material_ids
-                )
-
-                cost_report_path = output_dir / f"{project_name}_cost_report.txt"
-                self.cost_calculator.generate_cost_report(
-                    usage_data=usage_data,
-                    instructions=instructions,
-                    output_path=cost_report_path,
-                )
-                generated_files["cost_report"] = str(cost_report_path)
-
-                # Also save cost data as JSON
-                cost_json_path = output_dir / f"{project_name}_cost_data.json"
-                with open(cost_json_path, "w") as f:
-                    json.dump(usage_data, f, indent=2)
-                generated_files["cost_data"] = str(cost_json_path)
 
             # 5. Generate individual layer STLs if requested
             if "layer_stls" in export_formats:

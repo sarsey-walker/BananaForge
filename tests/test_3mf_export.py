@@ -82,6 +82,66 @@ class Test3MFFileStructureGeneration:
         assert exporter.device == device
         assert exporter.material_db == material_db
         assert exporter.ns_manager is not None
+
+    def test_3mf_reuses_existing_stl_geometry(self, tmp_path, monkeypatch, material_db):
+        """3MF export should reuse an already generated STL when available."""
+        from bananaforge.output.threemf_exporter import ThreeMFExporter
+
+        stl_path = tmp_path / "existing.stl"
+        stl_path.write_bytes(b"Binary STL".ljust(80, b" ") + (0).to_bytes(4, "little"))
+
+        exporter = ThreeMFExporter(material_db=material_db)
+
+        def fake_extract_from_stl(path, heightmap_torch):
+            assert Path(path) == stl_path
+            return {
+                "vertices": [],
+                "triangles": [],
+                "heightmap_shape": heightmap_torch.shape,
+            }
+
+        monkeypatch.setattr(exporter, "_extract_geometry_from_stl", fake_extract_from_stl)
+        monkeypatch.setattr(
+            exporter.production_exporter,
+            "create_3mf_container",
+            lambda geometry, materials, config, results: b"3mf-data",
+        )
+
+        result = exporter.export(
+            {
+                "heightmap": torch.zeros(1, 1, 2, 2),
+                "layer_materials": {},
+                "stl_path": str(stl_path),
+            },
+            tmp_path / "model.3mf",
+        )
+
+        assert result["success"]
+
+    def test_3mf_rejects_oversized_mesh_before_stl_generation(
+        self, tmp_path, monkeypatch, material_db
+    ):
+        """Oversized 3MF exports should fail gracefully before huge mesh work."""
+        from bananaforge.output.stl_generator import STLGenerator
+        from bananaforge.output.threemf_exporter import ThreeMFExporter
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError("STL generation should not run for oversized 3MF")
+
+        monkeypatch.setenv("BANANAFORGE_MAX_3MF_TRIANGLES", "10")
+        monkeypatch.setattr(STLGenerator, "generate_stl", fail_if_called)
+
+        exporter = ThreeMFExporter(material_db=material_db)
+        result = exporter.export(
+            {
+                "heightmap": torch.zeros(1, 1, 10, 10),
+                "layer_materials": {},
+            },
+            tmp_path / "oversized.3mf",
+        )
+
+        assert not result["success"]
+        assert "too large" in result["error"]
     
     def test_3mf_zip_container_structure(self, sample_optimization_results, material_db):
         """Test that 3MF file creates proper ZIP container structure."""
@@ -136,6 +196,41 @@ class Test3MFFileStructureGeneration:
         
         for ext in expected_content_types.keys():
             assert ext in found_extensions, f"Missing content type for extension: {ext}"
+
+
+class TestModelExporterOutputOrdering:
+    """Test ModelExporter ordering around lightweight and heavyweight outputs."""
+
+    def test_instructions_are_written_before_heavy_stl_failure(
+        self, tmp_path, monkeypatch
+    ):
+        """Instruction files should survive if a later mesh export fails."""
+        material_db = DefaultMaterials.create_bambu_basic_pla()
+        material_ids = material_db.get_material_ids()[:2]
+        exporter = ModelExporter(material_db=material_db)
+
+        def fail_stl_generation(*args, **kwargs):
+            raise RuntimeError("simulated heavy mesh failure")
+
+        monkeypatch.setattr(exporter.stl_generator, "generate_stl", fail_stl_generation)
+
+        height_map = torch.ones(1, 1, 3, 3)
+        material_assignments = torch.zeros(2, 3, 3, dtype=torch.long)
+        material_assignments[1] = 1
+
+        with pytest.raises(RuntimeError, match="simulated heavy mesh failure"):
+            exporter.export_complete_model(
+                height_map=height_map,
+                material_assignments=material_assignments,
+                material_database=material_db,
+                material_ids=material_ids,
+                output_dir=tmp_path,
+                project_name="ordered",
+                export_formats=["instructions", "stl"],
+            )
+
+        assert (tmp_path / "ordered_instructions.txt").exists()
+        assert (tmp_path / "ordered_instructions.csv").exists()
 
 
 class Test3MFPerLayerMaterialAssignment:
