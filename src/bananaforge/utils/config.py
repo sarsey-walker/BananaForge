@@ -42,6 +42,7 @@ class ConfigManager:
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration."""
         return {
+            "random_seed": 0,
             "optimization": {
                 "iterations": 6000,
                 "learning_rate": 0.01,
@@ -243,6 +244,7 @@ class ConfigManager:
             "BANANAFORGE_OUTPUT_DIR": "output.directory",
             "BANANAFORGE_MAX_TRIANGLES": "export.max_triangles",
             "BANANAFORGE_BOTTOM_MODE": "export.bottom_mode",
+            "BANANAFORGE_RANDOM_SEED": "random_seed",
         }
 
         for env_var, config_key in env_mappings.items():

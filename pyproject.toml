@@ -15,12 +15,14 @@ keywords = ["3d-printing", "optimization", "multi-layer", "image-to-3d"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Intended Audience :: Manufacturing", 
+    "Intended Audience :: Manufacturing",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
@@ -61,10 +63,10 @@ dev = [
 bananaforge = "bananaforge.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/bananaforge/bananaforge"
-Repository = "https://github.com/bananaforge/bananaforge"
-Documentation = "https://bananaforge.readthedocs.io"
-"Bug Tracker" = "https://github.com/bananaforge/bananaforge/issues"
+Homepage = "https://github.com/sarsey-walker/BananaForge"
+Repository = "https://github.com/sarsey-walker/BananaForge"
+Documentation = "https://github.com/sarsey-walker/BananaForge/tree/main/docs"
+"Bug Tracker" = "https://github.com/sarsey-walker/BananaForge/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

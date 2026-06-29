@@ -1,0 +1,30 @@
+{
+  "random_seed": 0,
+  "optimization": {
+    "iterations": 6000,
+    "learning_rate": 0.01,
+    "device": "auto"
+  },
+  "model": {
+    "layer_height": 0.08,
+    "initial_layer_height": 0.16,
+    "max_layers": 15,
+    "physical_size": 180.0,
+    "resolution": 512,
+    "nozzle_diameter": 0.4
+  },
+  "materials": {
+    "max_materials": 4,
+    "default_database": "bambu_pla"
+  },
+  "export": {
+    "default_formats": ["stl", "3mf", "instructions", "cost_report"],
+    "project_name": "bananaforge_model",
+    "generate_preview": false,
+    "max_triangles": 2000000,
+    "bottom_mode": "simplified"
+  },
+  "output": {
+    "directory": "./output"
+  }
+}

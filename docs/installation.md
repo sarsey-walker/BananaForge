@@ -28,7 +28,7 @@ pip install bananaforge
 
 ```bash
 bananaforge --version
-# Should show: BananaForge Version: 1.0.0
+# Should show: BananaForge Version: 0.1.0
 ```
 
 ### 3. Test Basic Functionality

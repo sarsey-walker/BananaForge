@@ -6,13 +6,14 @@ Tests CLI integration with transparency detection to ensure the
 command-line interface properly handles transparency scenarios.
 """
 
-import pytest
-import tempfile
+import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 from PIL import Image
-import json
 
 
 @pytest.fixture
@@ -25,36 +26,37 @@ class TestCLITransparencyIntegration:
     """
     Test CLI integration with transparency detection functionality.
     """
-    
+
     def create_test_rgba_image(self, path: Path, width: int = 100, height: int = 100):
         """Create test RGBA PNG image."""
-        image = Image.new('RGBA', (width, height), (255, 0, 0, 0))  # Transparent red
+        image = Image.new("RGBA", (width, height), (255, 0, 0, 0))  # Transparent red
         # Add opaque center square
         for x in range(width // 4, 3 * width // 4):
             for y in range(height // 4, 3 * height // 4):
                 image.putpixel((x, y), (0, 255, 0, 255))  # Opaque green
-        image.save(path, 'PNG')
+        image.save(path, "PNG")
         return path
-    
+
     def create_test_rgb_image(self, path: Path, width: int = 100, height: int = 100):
         """Create test RGB PNG image."""
-        image = Image.new('RGB', (width, height), (255, 0, 0))  # Red background
+        image = Image.new("RGB", (width, height), (255, 0, 0))  # Red background
         # Add green center
         for x in range(width // 4, 3 * width // 4):
             for y in range(height // 4, 3 * height // 4):
                 image.putpixel((x, y), (0, 255, 0))  # Green center
-        image.save(path, 'PNG')
+        image.save(path, "PNG")
         return path
-    
+
     def test_cli_module_imports(self):
         """Test that CLI module can be imported and basic commands exist."""
         try:
             from bananaforge.cli import cli, convert
+
             assert cli is not None, "CLI group should be importable"
             assert convert is not None, "Convert command should be importable"
         except ImportError as e:
             pytest.skip(f"CLI module not available for testing: {e}")
-    
+
     def test_cli_help_command(self):
         """Test that CLI help command works."""
         try:
@@ -62,7 +64,7 @@ class TestCLITransparencyIntegration:
                 [sys.executable, "-m", "bananaforge", "--help"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             # Help should exit with code 0
             assert result.returncode == 0, "Help command should succeed"
@@ -71,7 +73,7 @@ class TestCLITransparencyIntegration:
             pytest.skip("CLI help command timed out")
         except FileNotFoundError:
             pytest.skip("BananaForge CLI not available in current environment")
-    
+
     def test_cli_convert_help(self):
         """Test that convert command help works."""
         try:
@@ -79,7 +81,7 @@ class TestCLITransparencyIntegration:
                 [sys.executable, "-m", "bananaforge", "convert", "--help"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             assert result.returncode == 0, "Convert help should succeed"
             assert "convert" in result.stdout.lower(), "Help should mention convert"
@@ -87,7 +89,7 @@ class TestCLITransparencyIntegration:
             pytest.skip("CLI convert help command timed out")
         except FileNotFoundError:
             pytest.skip("BananaForge CLI not available in current environment")
-    
+
     def test_cli_version_command(self):
         """Test that version command works."""
         try:
@@ -95,7 +97,7 @@ class TestCLITransparencyIntegration:
                 [sys.executable, "-m", "bananaforge", "version"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             # Version command might not exist, so we check if it at least doesn't crash
             # The important thing is that the module is importable
@@ -104,23 +106,27 @@ class TestCLITransparencyIntegration:
             pytest.skip("CLI version command timed out")
         except FileNotFoundError:
             pytest.skip("BananaForge CLI not available in current environment")
-    
+
     def test_cli_transparency_flags_exist(self):
         """Test that transparency-related flags exist in CLI."""
         try:
-            from bananaforge.cli import convert
             # Check if transparency flags are in the convert command
             import click
+
+            from bananaforge.cli import convert
+
             ctx = click.Context(convert)
             params = [param.name for param in convert.params]
-            
+
             # Look for transparency-related parameters
-            transparency_params = [p for p in params if 'transparency' in p.lower()]
-            assert len(transparency_params) >= 0, "Should have transparency-related parameters"
-            
+            transparency_params = [p for p in params if "transparency" in p.lower()]
+            assert (
+                len(transparency_params) >= 0
+            ), "Should have transparency-related parameters"
+
         except ImportError:
             pytest.skip("CLI module not available for testing")
-    
+
     @pytest.mark.integration
     def test_cli_basic_functionality_with_transparent_image(self, temp_dir):
         """Test CLI basic functionality with transparent image (integration test)."""
@@ -129,41 +135,63 @@ class TestCLITransparencyIntegration:
             # Create test image
             rgba_path = temp_dir / "test_rgba.png"
             self.create_test_rgba_image(rgba_path)
-            
+
             # Create output directory
             output_dir = temp_dir / "output"
             output_dir.mkdir()
-            
+
             # Try to run a basic convert command with minimal options
             # Note: This might fail due to missing dependencies, but we test the interface
-            result = subprocess.run([
-                sys.executable, "-m", "bananaforge", "convert", 
-                str(rgba_path),
-                "--output", str(output_dir),
-                "--max-layers", "5",
-                "--iterations", "10",  # Very few iterations for speed
-                "--device", "cpu",
-                "--resolution", "64",  # Low resolution for speed
-                "--skip-transparency-check",
-            ], capture_output=True, text=True, timeout=30)
-            
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "bananaforge",
+                    "convert",
+                    str(rgba_path),
+                    "--output",
+                    str(output_dir),
+                    "--max-layers",
+                    "5",
+                    "--iterations",
+                    "10",  # Very few iterations for speed
+                    "--device",
+                    "cpu",
+                    "--resolution",
+                    "64",  # Low resolution for speed
+                    "--skip-transparency-check",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
             # The command might fail due to various reasons (missing materials, etc.)
             # but it should not crash due to transparency issues
             if result.returncode != 0:
                 # Check if failure is transparency-related
                 error_output = result.stderr.lower()
                 transparency_errors = [
-                    "transparency", "alpha", "rgba", "transparent background"
+                    "transparency",
+                    "alpha",
+                    "rgba",
+                    "transparent background",
                 ]
-                
-                has_transparency_error = any(err in error_output for err in transparency_errors)
-                
+
+                has_transparency_error = any(
+                    err in error_output for err in transparency_errors
+                )
+
                 if has_transparency_error:
-                    pytest.fail(f"CLI failed due to transparency handling: {result.stderr}")
+                    pytest.fail(
+                        f"CLI failed due to transparency handling: {result.stderr}"
+                    )
                 else:
                     # Other type of failure (materials, optimization, etc.) - acceptable
-                    print(f"CLI failed for non-transparency reasons: {result.stderr[:200]}...")
-            
+                    print(
+                        f"CLI failed for non-transparency reasons: {result.stderr[:200]}..."
+                    )
+
         except subprocess.TimeoutExpired:
             pytest.skip("CLI convert command timed out")
         except FileNotFoundError:
@@ -176,44 +204,47 @@ class TestCLITransparencyValidation:
     """
     Test CLI validation and error handling for transparency scenarios.
     """
-    
+
     def test_cli_parameter_validation(self):
         """Test that CLI parameters are properly validated."""
         try:
-            from bananaforge.cli import convert
             import click
-            
+
+            from bananaforge.cli import convert
+
             # Test that convert command exists and has expected parameters
             assert convert is not None
             assert isinstance(convert, click.Command)
-            
+
             # Check for transparency-related parameters
             param_names = [param.name for param in convert.params]
             expected_params = ["input_image", "output", "device"]
-            
+
             for param in expected_params:
-                assert param in param_names, f"Expected parameter {param} not found in CLI"
-                
+                assert (
+                    param in param_names
+                ), f"Expected parameter {param} not found in CLI"
+
         except ImportError:
             pytest.skip("CLI module not available")
-    
+
     def test_cli_transparency_export_formats(self):
         """Test that transparency-related export formats are available."""
         try:
             from bananaforge.cli import convert
-            
+
             # Find export_format parameter
             export_param = None
             for param in convert.params:
                 if param.name == "export_format":
                     export_param = param
                     break
-            
-            if export_param and hasattr(export_param, 'default'):
+
+            if export_param and hasattr(export_param, "default"):
                 default_formats = str(export_param.default)
                 # Should have basic formats available
                 assert "stl" in default_formats, "STL export should be available"
-                
+
         except ImportError:
             pytest.skip("CLI module not available")
 
@@ -291,6 +322,34 @@ class TestCLIDeviceResolution:
 
         assert bottom_mode_param.default == "simplified"
         assert set(bottom_mode_param.type.choices) == {"simplified", "full", "none"}
+
+    def test_convert_exposes_random_seed_option(self):
+        """The convert command should expose reproducible run seeding."""
+        from bananaforge.cli import convert
+
+        random_seed_param = next(
+            param for param in convert.params if param.name == "random_seed"
+        )
+
+        assert random_seed_param.default == 0
+        assert any("--random-seed" in opts for opts in random_seed_param.opts)
+
+    def test_random_seed_helper_seeds_supported_rngs(self):
+        """A fixed seed should reset Python, NumPy, and Torch RNG streams."""
+        import random
+
+        import numpy as np
+        import torch
+
+        from bananaforge.cli import _apply_random_seed
+
+        _apply_random_seed(123)
+        first_values = (random.random(), np.random.rand(), torch.rand(1).item())
+
+        _apply_random_seed(123)
+        second_values = (random.random(), np.random.rand(), torch.rand(1).item())
+
+        assert first_values == second_values
 
     def test_preventive_mesh_warning_mentions_size_controls(self, capsys):
         """Large mesh estimates should warn before conversion does heavy work."""
@@ -378,6 +437,7 @@ class TestCLIConfigDefaults:
         monkeypatch.setenv("BANANAFORGE_DEVICE", "cpu")
         monkeypatch.setenv("BANANAFORGE_MAX_TRIANGLES", "500000")
         monkeypatch.setenv("BANANAFORGE_BOTTOM_MODE", "none")
+        monkeypatch.setenv("BANANAFORGE_RANDOM_SEED", "123")
 
         config_manager = ConfigManager()
         config_manager.apply_env_overrides()
@@ -386,6 +446,7 @@ class TestCLIConfigDefaults:
         assert config_manager.get("optimization.device") == "cpu"
         assert config_manager.get("export.max_triangles") == 500000
         assert config_manager.get("export.bottom_mode") == "none"
+        assert config_manager.get("random_seed") == 123
 
     def test_config_option_accepts_environment_variable(self):
         """The documented config env var should be wired into the root CLI."""
@@ -400,50 +461,63 @@ class TestCLIDocumentation:
     """
     Test CLI documentation and help text for transparency features.
     """
-    
+
     def test_cli_help_mentions_transparency(self):
         """Test that CLI help mentions transparency features."""
         try:
-            result = subprocess.run([
-                sys.executable, "-m", "bananaforge", "convert", "--help"
-            ], capture_output=True, text=True, timeout=10)
-            
+            result = subprocess.run(
+                [sys.executable, "-m", "bananaforge", "convert", "--help"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
             if result.returncode == 0:
                 help_text = result.stdout.lower()
                 # Check if transparency is mentioned in help
-                transparency_mentions = [
-                    "transparency", "alpha", "enable-transparency"
-                ]
-                
-                mentions_found = sum(1 for mention in transparency_mentions if mention in help_text)
+                transparency_mentions = ["transparency", "alpha", "enable-transparency"]
+
+                mentions_found = sum(
+                    1 for mention in transparency_mentions if mention in help_text
+                )
                 # Don't require transparency mentions (they might not be implemented yet)
                 # but if they exist, that's good
                 if mentions_found > 0:
                     print(f"Found {mentions_found} transparency-related help mentions")
-                
+
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pytest.skip("CLI help not available")
-    
+
     def test_cli_error_messages_quality(self, temp_dir):
         """Test that CLI error messages are helpful."""
         try:
             # Test with non-existent file
-            result = subprocess.run([
-                sys.executable, "-m", "bananaforge", "convert",
-                "/nonexistent/file.png"
-            ], capture_output=True, text=True, timeout=10)
-            
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "bananaforge",
+                    "convert",
+                    "/nonexistent/file.png",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
             # Should fail with helpful error message
             assert result.returncode != 0, "Should fail with nonexistent file"
-            
+
             error_message = result.stderr.lower()
             # Should mention file not found or similar
             error_indicators = ["not found", "does not exist", "file", "error"]
-            has_helpful_error = any(indicator in error_message for indicator in error_indicators)
-            
+            has_helpful_error = any(
+                indicator in error_message for indicator in error_indicators
+            )
+
             if not has_helpful_error and error_message:
                 print(f"Error message might need improvement: {result.stderr[:200]}")
-                
+
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pytest.skip("CLI error testing not available")
 

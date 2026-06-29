@@ -32,6 +32,7 @@ bananaforge convert image.jpg --config my_config.json
 
 ```json
 {
+  "random_seed": 0,
   "optimization": {
     "iterations": 6000,
     "learning_rate": 0.01,
@@ -386,6 +387,7 @@ Set system-wide defaults with environment variables:
 | `BANANAFORGE_OUTPUT_DIR` | Default output directory | `./my_outputs` |
 | `BANANAFORGE_MAX_TRIANGLES` | Export mesh triangle budget | `2000000` |
 | `BANANAFORGE_BOTTOM_MODE` | Bottom face mode: `simplified`, `full`, or `none` | `simplified` |
+| `BANANAFORGE_RANDOM_SEED` | Random seed for reproducible runs; `0` disables seeding | `123` |
 
 ### Setting Environment Variables
 

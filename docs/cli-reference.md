@@ -77,6 +77,7 @@ bananaforge convert INPUT_IMAGE [OPTIONS]
 - `--device [auto|cpu|cuda|mps]` - Device for computation (default: auto)
 - `--num-init-rounds INT` - Number of rounds for heightmap initialization (default: 8)
 - `--num-init-cluster-layers INT` - Number of layers to cluster the image into (default: -1)
+- `--random-seed INT` - Random seed for reproducible initialization and optimization; `0` disables seeding
 - `--mixed-precision` - Enable mixed precision for memory efficiency (CUDA only)
 
 #### Export Options
@@ -392,7 +393,7 @@ bananaforge version
 
 ### Output
 ```
-BananaForge 1.0.0
+BananaForge 0.1.0
 ```
 
 ---
@@ -609,4 +610,4 @@ Show BananaForge version information.
 bananaforge version
 ```
 
-BananaForge 1.0.0
+BananaForge 0.1.0

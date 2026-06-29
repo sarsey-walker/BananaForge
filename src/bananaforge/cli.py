@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import random
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -42,6 +43,18 @@ except ImportError:
 LARGE_MESH_WARNING_TRIANGLES = 2_000_000
 LARGE_MESH_WARNING_BYTES = 100 * 1024 * 1024
 MESH_EXPORT_FORMATS = {"stl", "3mf", "bambu", "prusa", "layer_stls", "preview"}
+
+
+def _apply_random_seed(random_seed: int) -> None:
+    """Seed supported RNGs when a positive seed is provided."""
+    if random_seed <= 0:
+        return
+
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(random_seed)
 
 
 def _config_default(ctx, parameter_name: str, config_key, current_value):
@@ -251,62 +264,66 @@ def cli(ctx, verbose: bool, quiet: bool, config):
     help="Number of layers to cluster the image into",
 )
 @click.option(
-    "--enable-transparency", 
-    is_flag=True, 
-    help="Enable transparency-based color mixing"
+    "--random-seed",
+    type=int,
+    default=0,
+    help="Random seed for reproducible initialization and optimization; 0 disables seeding",
+)
+@click.option(
+    "--enable-transparency", is_flag=True, help="Enable transparency-based color mixing"
 )
 @click.option(
     "--opacity-levels",
     type=str,
     default="0.33,0.67,1.0",
-    help="Custom opacity levels (comma-separated, default: 0.33,0.67,1.0)"
+    help="Custom opacity levels (comma-separated, default: 0.33,0.67,1.0)",
 )
 @click.option(
     "--optimize-base-layers",
     is_flag=True,
-    help="Optimize base layer colors for maximum contrast"
+    help="Optimize base layer colors for maximum contrast",
 )
 @click.option(
     "--enable-gradients",
     is_flag=True,
-    help="Enable gradient processing for smooth transitions"
+    help="Enable gradient processing for smooth transitions",
 )
 @click.option(
     "--transparency-threshold",
     type=float,
     default=0.3,
-    help="Minimum transparency savings threshold (default: 0.3)"
+    help="Minimum transparency savings threshold (default: 0.3)",
 )
 @click.option(
     "--mixed-precision",
     is_flag=True,
-    help="Enable mixed precision for memory efficiency (CUDA only)"
+    help="Enable mixed precision for memory efficiency (CUDA only)",
 )
 @click.option(
     "--bambu-compatible",
     is_flag=True,
-    help="Generate 3MF files optimized for Bambu Studio compatibility (EXPERIMENTAL)"
+    help="Generate 3MF files optimized for Bambu Studio compatibility (EXPERIMENTAL)",
 )
 @click.option(
     "--include-3mf-metadata",
     is_flag=True,
     default=True,
-    help="Include detailed metadata in 3MF files (default: enabled)"
+    help="Include detailed metadata in 3MF files (default: enabled)",
 )
 @click.option(
     "--skip-transparency-check",
     is_flag=True,
-    help="Skip transparency detection and proceed with RGB conversion (may affect quality)"
+    help="Skip transparency detection and proceed with RGB conversion (may affect quality)",
 )
 @click.option(
     "--analyze-transparency",
     is_flag=True,
-    help="Perform detailed transparency analysis and show statistics for all images"
+    help="Perform detailed transparency analysis and show statistics for all images",
 )
 @click.option(
     "--transparency-verbose",
     is_flag=True,
-    help="Show detailed technical information in transparency reports"
+    help="Show detailed technical information in transparency reports",
 )
 @click.pass_context
 def convert(
@@ -331,6 +348,7 @@ def convert(
     preview,
     num_init_rounds,
     num_init_cluster_layers,
+    random_seed,
     enable_transparency,
     opacity_levels,
     optimize_base_layers,
@@ -394,6 +412,10 @@ def convert(
         )
         resolution = _config_default(ctx, "resolution", "model.resolution", resolution)
         preview = _config_default(ctx, "preview", "export.generate_preview", preview)
+        random_seed = _config_default(ctx, "random_seed", "random_seed", random_seed)
+        if random_seed < 0:
+            raise click.ClickException("--random-seed must be zero or positive")
+        _apply_random_seed(random_seed)
         enable_transparency = _config_default(
             ctx, "enable_transparency", "transparency.enabled", enable_transparency
         )
@@ -407,7 +429,10 @@ def convert(
             optimize_base_layers,
         )
         enable_gradients = _config_default(
-            ctx, "enable_gradients", "transparency.gradient_processing", enable_gradients
+            ctx,
+            "enable_gradients",
+            "transparency.gradient_processing",
+            enable_gradients,
         )
         transparency_threshold = _config_default(
             ctx,
@@ -451,18 +476,33 @@ def convert(
             logger.info("Using %s device", device)
 
         # Parse and validate export formats
-        valid_export_formats = ["stl", "3mf", "instructions", "hueforge", "prusa", "bambu", "cost_report", "transparency_analysis"]
-        export_format_list = [fmt.strip() for fmt in export_format.split(',')]
-        invalid_formats = [fmt for fmt in export_format_list if fmt not in valid_export_formats]
-        
+        valid_export_formats = [
+            "stl",
+            "3mf",
+            "instructions",
+            "hueforge",
+            "prusa",
+            "bambu",
+            "cost_report",
+            "transparency_analysis",
+        ]
+        export_format_list = [fmt.strip() for fmt in export_format.split(",")]
+        invalid_formats = [
+            fmt for fmt in export_format_list if fmt not in valid_export_formats
+        ]
+
         if invalid_formats:
-            raise click.ClickException(f"Invalid export format(s): {', '.join(invalid_formats)}. Valid formats: {', '.join(valid_export_formats)}")
-        
+            raise click.ClickException(
+                f"Invalid export format(s): {', '.join(invalid_formats)}. Valid formats: {', '.join(valid_export_formats)}"
+            )
+
         # Automatically add 3MF export when bambu-compatible is enabled
         if bambu_compatible and "3mf" not in export_format_list:
             export_format_list.append("3mf")
-            click.echo("🔧 Bambu compatibility enabled: Added 3MF export format (EXPERIMENTAL)")
-        
+            click.echo(
+                "🔧 Bambu compatibility enabled: Added 3MF export format (EXPERIMENTAL)"
+            )
+
         logger.info(f"Export formats: {', '.join(export_format_list)}")
 
         # Initialize components
@@ -471,50 +511,73 @@ def convert(
         # Transparency detection (unless skipped)
         if not skip_transparency_check or analyze_transparency:
             from .image.transparency_detector import TransparencyDetector
-            from .image.transparency_notifier import TransparencyNotifier, TransparencyException
+            from .image.transparency_notifier import (
+                TransparencyException,
+                TransparencyNotifier,
+            )
             from .image.transparency_reporter import TransparencyReporter
-            
+
             try:
                 transparency_detector = TransparencyDetector()
-                transparency_info = transparency_detector.detect_transparency(input_image)
-                
+                transparency_info = transparency_detector.detect_transparency(
+                    input_image
+                )
+
                 # Always show analysis if requested
                 if analyze_transparency:
                     transparency_reporter = TransparencyReporter()
-                    stats = transparency_reporter.generate_detailed_report(transparency_info, input_image)
-                    report = transparency_reporter.format_statistics_report(stats, verbose=transparency_verbose)
+                    stats = transparency_reporter.generate_detailed_report(
+                        transparency_info, input_image
+                    )
+                    report = transparency_reporter.format_statistics_report(
+                        stats, verbose=transparency_verbose
+                    )
                     console.print("\n" + report)
-                
+
                 # Stop processing if transparency detected (unless skipped)
                 if transparency_info.has_transparency and not skip_transparency_check:
                     transparency_notifier = TransparencyNotifier()
-                    notification = transparency_notifier.create_notification(transparency_info)
-                    
+                    notification = transparency_notifier.create_notification(
+                        transparency_info
+                    )
+
                     # Show notification
                     cli_message = transparency_notifier.format_cli_message(
-                        notification, 
+                        notification,
                         show_technical=transparency_verbose,
-                        show_suggestions=True
+                        show_suggestions=True,
                     )
                     console.print(cli_message)
-                    
+
                     # Show educational content if verbose
                     if transparency_verbose:
-                        educational_content = transparency_notifier.get_educational_content(transparency_info)
+                        educational_content = (
+                            transparency_notifier.get_educational_content(
+                                transparency_info
+                            )
+                        )
                         console.print(educational_content)
-                    
+
                     # Exit with helpful message
-                    console.print("\n💡 Use --skip-transparency-check to proceed anyway (may affect quality)")
-                    console.print("💡 Use --analyze-transparency to see detailed transparency analysis")
+                    console.print(
+                        "\n💡 Use --skip-transparency-check to proceed anyway (may affect quality)"
+                    )
+                    console.print(
+                        "💡 Use --analyze-transparency to see detailed transparency analysis"
+                    )
                     sys.exit(1)
-                
+
                 elif not transparency_info.has_transparency and analyze_transparency:
-                    console.print("✅ No transparency detected - image is ready for 3D printing optimization!")
-                    
+                    console.print(
+                        "✅ No transparency detected - image is ready for 3D printing optimization!"
+                    )
+
             except Exception as e:
                 if not skip_transparency_check:
                     console.print(f"⚠️ Transparency detection failed: {e}")
-                    console.print("💡 Use --skip-transparency-check to bypass detection and proceed")
+                    console.print(
+                        "💡 Use --skip-transparency-check to bypass detection and proceed"
+                    )
                     sys.exit(1)
                 else:
                     logger.warning(f"Transparency detection failed but skipped: {e}")
@@ -618,7 +681,9 @@ def convert(
 
         # Match materials to image colors (use processing image for efficiency)
         click.echo("Matching materials to image colors...")
-        color_matcher = ColorMatcher(material_db, device, enable_transparency=enable_transparency)
+        color_matcher = ColorMatcher(
+            material_db, device, enable_transparency=enable_transparency
+        )
         selected_materials, selected_colors, color_mapping = (
             color_matcher.optimize_material_selection(processing_image, max_materials)
         )
@@ -632,74 +697,94 @@ def convert(
         transparency_result = None
         if enable_transparency:
             click.echo("🌈 Initializing transparency features...")
-            
+
             # Parse opacity levels
             try:
-                opacity_levels_list = [float(x.strip()) for x in opacity_levels.split(',')]
+                opacity_levels_list = [
+                    float(x.strip()) for x in opacity_levels.split(",")
+                ]
             except ValueError:
-                raise click.ClickException(f"Invalid opacity levels format: {opacity_levels}. Use comma-separated floats like '0.33,0.67,1.0'")
-            
+                raise click.ClickException(
+                    f"Invalid opacity levels format: {opacity_levels}. Use comma-separated floats like '0.33,0.67,1.0'"
+                )
+
             # Import transparency integration
             from .materials.transparency_integration import TransparencyIntegration
-            
+
             # Create transparency integration system
             transparency_integration = TransparencyIntegration(
                 material_db=material_db,
                 color_matcher=color_matcher,
                 layer_optimizer=None,  # Will be set later
-                device=device
+                device=device,
             )
-            
+
             # Setup transparency configuration
             transparency_config = {
-                'opacity_levels': opacity_levels_list,
+                "opacity_levels": opacity_levels_list,
                 # Support both parameter naming conventions for compatibility
-                'enable_gradient_mixing': enable_gradients,
-                'gradient_mixing': enable_gradients,
-                'enable_base_layer_optimization': optimize_base_layers,
-                'base_optimization': optimize_base_layers,
-                'transparency_threshold': transparency_threshold,
-                'mixed_precision': mixed_precision and device == 'cuda'
+                "enable_gradient_mixing": enable_gradients,
+                "gradient_mixing": enable_gradients,
+                "enable_base_layer_optimization": optimize_base_layers,
+                "base_optimization": optimize_base_layers,
+                "transparency_threshold": transparency_threshold,
+                "mixed_precision": mixed_precision and device == "cuda",
             }
-            
+
             # Prepare existing workflow data
             existing_workflow_data = {
-                'image': processing_image,
-                'height_map': None,  # Will be set after generation
-                'material_assignments': None,  # Will be set after optimization
-                'materials': [{'id': mat_id, 'color': selected_colors[i].tolist()} 
-                             for i, mat_id in enumerate(selected_materials)],
-                'optimization_params': {
-                    'iterations': iterations,
-                    'layer_height': layer_height,
-                    'max_layers': max_layers,
-                }
+                "image": processing_image,
+                "height_map": None,  # Will be set after generation
+                "material_assignments": None,  # Will be set after optimization
+                "materials": [
+                    {"id": mat_id, "color": selected_colors[i].tolist()}
+                    for i, mat_id in enumerate(selected_materials)
+                ],
+                "optimization_params": {
+                    "iterations": iterations,
+                    "layer_height": layer_height,
+                    "max_layers": max_layers,
+                },
             }
-            
+
             # Enable transparency mode
             transparency_result = transparency_integration.enable_transparency_mode(
                 existing_workflow_data=existing_workflow_data,
                 transparency_config=transparency_config,
-                setup_mode=True  # Enable setup mode for early workflow integration
+                setup_mode=True,  # Enable setup mode for early workflow integration
             )
-            
-            if transparency_result.get('integration_success'):
+
+            if transparency_result.get("integration_success"):
                 click.echo("✅ Transparency features enabled successfully")
-                if transparency_result.get('setup_mode'):
-                    click.echo("   🔧 Setup mode: Configuration prepared for optimization")
-                if transparency_result.get('feature_status', {}).get('transparency_enabled'):
+                if transparency_result.get("setup_mode"):
+                    click.echo(
+                        "   🔧 Setup mode: Configuration prepared for optimization"
+                    )
+                if transparency_result.get("feature_status", {}).get(
+                    "transparency_enabled"
+                ):
                     click.echo(f"   📊 Opacity levels: {opacity_levels_list}")
-                if transparency_result.get('feature_status', {}).get('gradient_mixing_enabled'):
+                if transparency_result.get("feature_status", {}).get(
+                    "gradient_mixing_enabled"
+                ):
                     click.echo("   🌊 Gradient mixing: Enabled")
-                if transparency_result.get('feature_status', {}).get('base_optimization_enabled'):
+                if transparency_result.get("feature_status", {}).get(
+                    "base_optimization_enabled"
+                ):
                     click.echo("   🎯 Base layer optimization: Enabled")
-                
+
                 # Show optional missing fields if in setup mode
-                optional_missing = transparency_result.get('compatibility_check', {}).get('optional_missing', [])
+                optional_missing = transparency_result.get(
+                    "compatibility_check", {}
+                ).get("optional_missing", [])
                 if optional_missing:
-                    click.echo(f"   ⏳ Pending: {', '.join(optional_missing)} (will be available during optimization)")
+                    click.echo(
+                        f"   ⏳ Pending: {', '.join(optional_missing)} (will be available during optimization)"
+                    )
             else:
-                click.echo(f"⚠️  Transparency integration failed: {transparency_result.get('error', 'Unknown error')}")
+                click.echo(
+                    f"⚠️  Transparency integration failed: {transparency_result.get('error', 'Unknown error')}"
+                )
                 # Continue without transparency features
                 enable_transparency = False
 
@@ -712,11 +797,7 @@ def convert(
             num_init_cluster_layers=(
                 num_init_cluster_layers if num_init_cluster_layers != -1 else max_layers
             ),
-            random_seed=(
-                ctx.obj["config"].get("random_seed", 0)
-                if isinstance(ctx.obj["config"], dict)
-                else getattr(ctx.obj["config"], "random_seed", 0)
-            ),
+            random_seed=random_seed,
             background_color=(
                 ctx.obj["config"].get("background_color", "#000000")
                 if isinstance(ctx.obj["config"], dict)
@@ -810,56 +891,76 @@ def convert(
         ) = optimizer.get_final_results(selected_colors)
 
         # 🌈 Apply Transparency Optimization (New in v1.0)
-        if enable_transparency and transparency_result and transparency_result.get('integration_success'):
+        if (
+            enable_transparency
+            and transparency_result
+            and transparency_result.get("integration_success")
+        ):
             click.echo("🌈 Applying transparency optimization...")
             try:
                 # Now we have all required data, run full transparency optimization
                 transparency_workflow_data = {
-                    'image': processing_image,
-                    'height_map': final_height_map_processing,
-                    'material_assignments': final_material_assignments_processing,
-                    'materials': [{'id': mat_id, 'color': selected_colors[i].tolist()} 
-                                 for i, mat_id in enumerate(selected_materials)],
-                    'optimization_params': {
-                        'iterations': iterations,
-                        'layer_height': layer_height,
-                        'max_layers': max_layers,
-                    }
+                    "image": processing_image,
+                    "height_map": final_height_map_processing,
+                    "material_assignments": final_material_assignments_processing,
+                    "materials": [
+                        {"id": mat_id, "color": selected_colors[i].tolist()}
+                        for i, mat_id in enumerate(selected_materials)
+                    ],
+                    "optimization_params": {
+                        "iterations": iterations,
+                        "layer_height": layer_height,
+                        "max_layers": max_layers,
+                    },
                 }
-                
+
                 # Run transparency optimization (not in setup mode)
-                transparency_optimization_result = transparency_integration.run_with_config(
-                    workflow_data=transparency_workflow_data,
-                    transparency_config=transparency_config
+                transparency_optimization_result = (
+                    transparency_integration.run_with_config(
+                        workflow_data=transparency_workflow_data,
+                        transparency_config=transparency_config,
+                    )
                 )
-                
-                if transparency_optimization_result.get('optimization_success'):
+
+                if transparency_optimization_result.get("optimization_success"):
                     click.echo("✅ Transparency optimization completed")
-                    
+
                     # Update material assignments if transparency optimization improved them
-                    transparency_result_assignments = transparency_optimization_result.get(
-                        'optimization_result', {}
-                    ).get('final_assignments')
-                    
+                    transparency_result_assignments = (
+                        transparency_optimization_result.get(
+                            "optimization_result", {}
+                        ).get("final_assignments")
+                    )
+
                     if transparency_result_assignments is not None:
-                        final_material_assignments_processing = transparency_result_assignments
-                        click.echo("   🔄 Material assignments updated with transparency optimization")
-                    
+                        final_material_assignments_processing = (
+                            transparency_result_assignments
+                        )
+                        click.echo(
+                            "   🔄 Material assignments updated with transparency optimization"
+                        )
+
                     # Display transparency metrics
                     transparency_metrics = transparency_optimization_result.get(
-                        'optimization_result', {}
-                    ).get('optimization_metrics', {})
-                    
-                    if transparency_metrics.get('swap_reduction'):
-                        click.echo(f"   📉 Swap reduction: {transparency_metrics['swap_reduction']:.1f}%")
-                    if transparency_metrics.get('baseline_swaps') and transparency_metrics.get('optimized_swaps'):
-                        baseline = transparency_metrics['baseline_swaps']
-                        optimized = transparency_metrics['optimized_swaps']
+                        "optimization_result", {}
+                    ).get("optimization_metrics", {})
+
+                    if transparency_metrics.get("swap_reduction"):
+                        click.echo(
+                            f"   📉 Swap reduction: {transparency_metrics['swap_reduction']:.1f}%"
+                        )
+                    if transparency_metrics.get(
+                        "baseline_swaps"
+                    ) and transparency_metrics.get("optimized_swaps"):
+                        baseline = transparency_metrics["baseline_swaps"]
+                        optimized = transparency_metrics["optimized_swaps"]
                         click.echo(f"   🔢 Material swaps: {baseline} → {optimized}")
-                        
+
                 else:
-                    click.echo(f"⚠️  Transparency optimization failed: {transparency_optimization_result.get('error', 'Unknown error')}")
-                    
+                    click.echo(
+                        f"⚠️  Transparency optimization failed: {transparency_optimization_result.get('error', 'Unknown error')}"
+                    )
+
             except Exception as e:
                 click.echo(f"⚠️  Error during transparency optimization: {e}")
 
@@ -933,7 +1034,9 @@ def convert(
         if "3mf" in generated_files:
             click.echo(f"3MF model saved to {generated_files['3mf']}")
             if bambu_compatible:
-                click.echo("  → Optimized for Bambu Studio compatibility (EXPERIMENTAL)")
+                click.echo(
+                    "  → Optimized for Bambu Studio compatibility (EXPERIMENTAL)"
+                )
 
         if "instructions_txt" in generated_files:
             click.echo(
@@ -956,45 +1059,67 @@ def convert(
             click.echo(f"3MF file saved to {generated_files['bambu']} (EXPERIMENTAL)")
 
         # 🌈 Generate Transparency Analysis Report (New in v1.0)
-        if "transparency_analysis" in export_format_list and enable_transparency and transparency_result:
+        if (
+            "transparency_analysis" in export_format_list
+            and enable_transparency
+            and transparency_result
+        ):
             click.echo("🌈 Generating transparency analysis report...")
             try:
                 # Create transparency analysis report
                 transparency_report = {
                     "transparency_enabled": True,
-                    "opacity_levels": transparency_config.get('opacity_levels', []),
-                    "features_enabled": transparency_result.get('feature_status', {}),
-                    "integration_status": transparency_result.get('integration_success', False),
+                    "opacity_levels": transparency_config.get("opacity_levels", []),
+                    "features_enabled": transparency_result.get("feature_status", {}),
+                    "integration_status": transparency_result.get(
+                        "integration_success", False
+                    ),
                     "material_count": len(selected_materials),
                     "estimated_savings": {
                         "swap_reduction": "35%",  # This would come from actual analysis
                         "material_cost_savings": "$0.87",  # This would come from actual analysis
-                        "time_savings": "8 minutes"  # This would come from actual analysis
+                        "time_savings": "8 minutes",  # This would come from actual analysis
                     },
                     "recommendations": [
                         "Transparency mixing enabled for optimal results",
                         f"Using {len(transparency_config.get('opacity_levels', []))} opacity levels",
-                        "Base layer optimization active" if optimize_base_layers else "Consider enabling base layer optimization",
-                        "Gradient processing active" if enable_gradients else "Consider enabling gradient processing"
-                    ]
+                        (
+                            "Base layer optimization active"
+                            if optimize_base_layers
+                            else "Consider enabling base layer optimization"
+                        ),
+                        (
+                            "Gradient processing active"
+                            if enable_gradients
+                            else "Consider enabling gradient processing"
+                        ),
+                    ],
                 }
-                
+
                 # Save transparency analysis report
-                transparency_report_path = output_path / f"{project_name}_transparency_analysis.json"
-                with open(transparency_report_path, 'w') as f:
+                transparency_report_path = (
+                    output_path / f"{project_name}_transparency_analysis.json"
+                )
+                with open(transparency_report_path, "w") as f:
                     json.dump(transparency_report, f, indent=2)
-                
-                click.echo(f"📊 Transparency analysis saved to {transparency_report_path}")
-                
+
+                click.echo(
+                    f"📊 Transparency analysis saved to {transparency_report_path}"
+                )
+
                 # Display summary
                 click.echo("🌈 Transparency Analysis Summary:")
-                click.echo(f"   Opacity levels: {transparency_config.get('opacity_levels', [])}")
-                click.echo(f"   Features: {', '.join([k.replace('_enabled', '') for k, v in transparency_result.get('feature_status', {}).items() if v])}")
+                click.echo(
+                    f"   Opacity levels: {transparency_config.get('opacity_levels', [])}"
+                )
+                click.echo(
+                    f"   Features: {', '.join([k.replace('_enabled', '') for k, v in transparency_result.get('feature_status', {}).items() if v])}"
+                )
                 click.echo("   Estimated benefits:")
                 click.echo("     • Material swaps reduced: 35%")
                 click.echo("     • Cost savings: $0.87")
                 click.echo("     • Time savings: 8 minutes")
-                
+
             except Exception as e:
                 click.echo(f"⚠️  Failed to generate transparency analysis: {e}")
 
@@ -1078,27 +1203,35 @@ def export_materials(format, output, brand, max_materials, color_diversity):
 @click.option("--output", "-o", type=click.Path())
 # 🌈 Transparency Analysis (New)
 @click.option(
-    "--enable-transparency",
-    is_flag=True,
-    help="Analyze transparency mixing potential"
+    "--enable-transparency", is_flag=True, help="Analyze transparency mixing potential"
 )
 @click.option(
     "--transparency-threshold",
     type=float,
     default=0.25,
-    help="Minimum transparency savings to report (default: 0.25)"
+    help="Minimum transparency savings to report (default: 0.25)",
 )
 @click.option(
     "--analyze-gradients",
     is_flag=True,
-    help="Detect gradient regions suitable for transparency"
+    help="Detect gradient regions suitable for transparency",
 )
 @click.option(
     "--base-layer-analysis",
     is_flag=True,
-    help="Analyze base layer optimization potential"
+    help="Analyze base layer optimization potential",
 )
-def analyze_colors(input_image, materials, max_materials, method, output, enable_transparency, transparency_threshold, analyze_gradients, base_layer_analysis):
+def analyze_colors(
+    input_image,
+    materials,
+    max_materials,
+    method,
+    output,
+    enable_transparency,
+    transparency_threshold,
+    analyze_gradients,
+    base_layer_analysis,
+):
     """Analyze the color palette of an image and match it to materials."""
     try:
         from .materials.manager import MaterialManager
@@ -1141,60 +1274,68 @@ def analyze_colors(input_image, materials, max_materials, method, output, enable
             click.echo("\n🌈 --- Transparency Analysis ---")
             try:
                 # Import transparency components
-                from .materials.transparency_integration import TransparencyIntegration
                 from .materials.database import MaterialDatabase
-                
+                from .materials.transparency_integration import TransparencyIntegration
+
                 # Create material database from manager
                 material_db = MaterialDatabase()
                 # Convert manager materials to database format (simplified for now)
                 for mat_id in analysis["material_ids"]:
                     mat_info = manager.get_material_info(mat_id)
-                    material_db.add_material({
-                        'id': mat_id,
-                        'name': mat_info.name,
-                        'brand': mat_info.brand,
-                        'color_hex': mat_info.color_hex
-                    })
-                
+                    material_db.add_material(
+                        {
+                            "id": mat_id,
+                            "name": mat_info.name,
+                            "brand": mat_info.brand,
+                            "color_hex": mat_info.color_hex,
+                        }
+                    )
+
                 # Initialize transparency integration
                 transparency_integration = TransparencyIntegration(
                     material_db=material_db,
                     color_matcher=None,  # Will use internal matcher
                     layer_optimizer=None,
-                    device='cpu'
+                    device="cpu",
                 )
-                
+
                 # Prepare transparency analysis data
                 transparency_analysis = {
-                    'transparency_enabled': True,
-                    'base_materials': len(analysis["material_ids"]),
-                    'estimated_savings': {},
-                    'gradient_regions': 0,
-                    'base_layer_optimization': 'excellent' if base_layer_analysis else 'not_analyzed',
-                    'recommendations': []
+                    "transparency_enabled": True,
+                    "base_materials": len(analysis["material_ids"]),
+                    "estimated_savings": {},
+                    "gradient_regions": 0,
+                    "base_layer_optimization": (
+                        "excellent" if base_layer_analysis else "not_analyzed"
+                    ),
+                    "recommendations": [],
                 }
-                
+
                 # Calculate estimated achievable colors (3x expansion with 3 opacity levels)
                 base_materials = len(analysis["material_ids"])
                 achievable_colors = base_materials * 3  # Simplified calculation
-                
+
                 # Estimate savings
-                estimated_swap_reduction = min(35, (achievable_colors - base_materials) / base_materials * 100)
-                estimated_cost_savings = estimated_swap_reduction * 0.025  # $0.025 per % reduction
-                
-                transparency_analysis['estimated_savings'] = {
-                    'achievable_colors': achievable_colors,
-                    'swap_reduction_percent': estimated_swap_reduction,
-                    'material_cost_savings': f"${estimated_cost_savings:.2f}",
-                    'time_savings': f"{int(estimated_swap_reduction * 0.25)} minutes"
+                estimated_swap_reduction = min(
+                    35, (achievable_colors - base_materials) / base_materials * 100
+                )
+                estimated_cost_savings = (
+                    estimated_swap_reduction * 0.025
+                )  # $0.025 per % reduction
+
+                transparency_analysis["estimated_savings"] = {
+                    "achievable_colors": achievable_colors,
+                    "swap_reduction_percent": estimated_swap_reduction,
+                    "material_cost_savings": f"${estimated_cost_savings:.2f}",
+                    "time_savings": f"{int(estimated_swap_reduction * 0.25)} minutes",
                 }
-                
+
                 # Gradient analysis
                 if analyze_gradients:
                     # Simplified gradient detection (would be more sophisticated in real implementation)
-                    transparency_analysis['gradient_regions'] = 2  # Mock value
-                    transparency_analysis['gradient_analysis_enabled'] = True
-                
+                    transparency_analysis["gradient_regions"] = 2  # Mock value
+                    transparency_analysis["gradient_analysis_enabled"] = True
+
                 # Base layer analysis
                 if base_layer_analysis:
                     # Analyze if materials include good base colors (dark colors)
@@ -1202,57 +1343,79 @@ def analyze_colors(input_image, materials, max_materials, method, output, enable
                     for mat_id in analysis["material_ids"]:
                         mat_info = manager.get_material_info(mat_id)
                         # Simple check for dark colors (would be more sophisticated)
-                        color_hex = mat_info.color_hex.lstrip('#')
-                        rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+                        color_hex = mat_info.color_hex.lstrip("#")
+                        rgb = tuple(int(color_hex[i : i + 2], 16) for i in (0, 2, 4))
                         brightness = sum(rgb) / (3 * 255)
                         if brightness < 0.3:  # Dark color
                             dark_materials += 1
-                    
-                    transparency_analysis['base_layer_optimization'] = 'excellent' if dark_materials >= 1 else 'good'
-                
+
+                    transparency_analysis["base_layer_optimization"] = (
+                        "excellent" if dark_materials >= 1 else "good"
+                    )
+
                 # Generate recommendations
                 recommendations = []
                 if estimated_swap_reduction >= transparency_threshold * 100:
-                    recommendations.append("✅ Transparency mixing recommended - significant savings possible")
+                    recommendations.append(
+                        "✅ Transparency mixing recommended - significant savings possible"
+                    )
                 else:
-                    recommendations.append("⚠️  Limited transparency benefits with current material selection")
-                
+                    recommendations.append(
+                        "⚠️  Limited transparency benefits with current material selection"
+                    )
+
                 if not base_layer_analysis:
-                    recommendations.append("💡 Consider enabling base layer analysis for optimal results")
-                
+                    recommendations.append(
+                        "💡 Consider enabling base layer analysis for optimal results"
+                    )
+
                 if not analyze_gradients:
-                    recommendations.append("💡 Consider enabling gradient analysis for smooth transitions")
-                
-                recommendations.append(f"🎯 Use {achievable_colors} achievable colors with transparency mixing")
-                
-                transparency_analysis['recommendations'] = recommendations
-                
+                    recommendations.append(
+                        "💡 Consider enabling gradient analysis for smooth transitions"
+                    )
+
+                recommendations.append(
+                    f"🎯 Use {achievable_colors} achievable colors with transparency mixing"
+                )
+
+                transparency_analysis["recommendations"] = recommendations
+
                 # Display transparency analysis
                 click.echo(f"  Method: lab (transparency-aware)")
                 click.echo(f"  Base Materials: {base_materials}")
-                click.echo(f"  Achievable Colors: {achievable_colors} ({achievable_colors//base_materials}x expansion)")
-                click.echo(f"  Estimated Swap Reduction: {estimated_swap_reduction:.0f}%")
+                click.echo(
+                    f"  Achievable Colors: {achievable_colors} ({achievable_colors//base_materials}x expansion)"
+                )
+                click.echo(
+                    f"  Estimated Swap Reduction: {estimated_swap_reduction:.0f}%"
+                )
                 click.echo(f"  Material Cost Savings: ${estimated_cost_savings:.2f}")
-                click.echo(f"  Time Savings: {int(estimated_swap_reduction * 0.25)} minutes")
-                
+                click.echo(
+                    f"  Time Savings: {int(estimated_swap_reduction * 0.25)} minutes"
+                )
+
                 if analyze_gradients:
-                    click.echo(f"  Gradient Regions Detected: {transparency_analysis['gradient_regions']}")
-                
+                    click.echo(
+                        f"  Gradient Regions Detected: {transparency_analysis['gradient_regions']}"
+                    )
+
                 if base_layer_analysis:
-                    click.echo(f"  Base Layer Optimization: {transparency_analysis['base_layer_optimization'].title()}")
-                
+                    click.echo(
+                        f"  Base Layer Optimization: {transparency_analysis['base_layer_optimization'].title()}"
+                    )
+
                 click.echo("\n  Recommendations:")
                 for rec in recommendations:
                     click.echo(f"    {rec}")
-                
+
             except Exception as e:
                 click.echo(f"⚠️  Transparency analysis failed: {e}")
-                transparency_analysis = {'error': str(e)}
+                transparency_analysis = {"error": str(e)}
 
         # Combine results for output
         final_analysis = analysis.copy()
         if transparency_analysis:
-            final_analysis['transparency_analysis'] = transparency_analysis
+            final_analysis["transparency_analysis"] = transparency_analysis
 
         if output:
             with open(output, "w") as f:
@@ -1314,7 +1477,7 @@ def validate_stl(stl_file):
 @click.option(
     "--transparency-optimized",
     is_flag=True,
-    help="Create transparency-optimized configuration"
+    help="Create transparency-optimized configuration",
 )
 def init_config(output, transparency_optimized):
     """Initialize a default configuration file."""
@@ -1325,6 +1488,7 @@ def init_config(output, transparency_optimized):
         if transparency_optimized:
             click.echo("🌈 Creating transparency-optimized configuration...")
             config = {
+                "random_seed": 0,
                 "optimization": {
                     "iterations": 1500,
                     "learning_rate": 0.01,
@@ -1332,19 +1496,19 @@ def init_config(output, transparency_optimized):
                     "mixed_precision": True,
                     "discrete_validation_interval": 50,
                     "early_stopping_patience": 150,
-                    "device": "auto"
+                    "device": "auto",
                 },
                 "model": {
                     "layer_height": 0.2,
                     "base_height": 0.4,
                     "max_layers": 50,
                     "physical_size": 100.0,
-                    "resolution": 256
+                    "resolution": 256,
                 },
                 "materials": {
                     "max_materials": 6,
                     "color_matching_method": "lab",
-                    "default_database": "bambu_pla"
+                    "default_database": "bambu_pla",
                 },
                 "transparency": {
                     "enabled": True,
@@ -1355,36 +1519,42 @@ def init_config(output, transparency_optimized):
                     "quality_preservation_weight": 0.7,
                     "cost_reduction_weight": 0.3,
                     "max_gradient_layers": 3,
-                    "enable_enhancement": True
+                    "enable_enhancement": True,
                 },
                 "export": {
-                    "default_formats": ["stl", "instructions", "cost_report", "transparency_analysis"],
+                    "default_formats": [
+                        "stl",
+                        "instructions",
+                        "cost_report",
+                        "transparency_analysis",
+                    ],
                     "project_name": "bananaforge_model",
                     "generate_preview": False,
-                    "include_transparency_metadata": True
+                    "include_transparency_metadata": True,
                 },
                 "loss_weights": {
                     "perceptual": 1.0,
                     "color": 1.0,
                     "smoothness": 0.1,
-                    "consistency": 0.5
+                    "consistency": 0.5,
                 },
                 "output": {
                     "directory": "./output",
                     "compress_files": False,
-                    "keep_intermediate": False
+                    "keep_intermediate": False,
                 },
                 "advanced": {
                     "mesh_optimization": True,
                     "support_generation": False,
                     "hollowing": False,
-                    "infill_percentage": 15.0
-                }
+                    "infill_percentage": 15.0,
+                },
             }
         else:
             # Create standard configuration
             click.echo("Creating standard configuration...")
             config = {
+                "random_seed": 0,
                 "optimization": {
                     "iterations": 1000,
                     "learning_rate": 0.01,
@@ -1392,47 +1562,47 @@ def init_config(output, transparency_optimized):
                     "mixed_precision": False,
                     "discrete_validation_interval": 100,
                     "early_stopping_patience": 100,
-                    "device": "auto"
+                    "device": "auto",
                 },
                 "model": {
                     "layer_height": 0.2,
                     "base_height": 0.4,
                     "max_layers": 50,
                     "physical_size": 100.0,
-                    "resolution": 256
+                    "resolution": 256,
                 },
                 "materials": {
                     "max_materials": 8,
                     "color_matching_method": "perceptual",
-                    "default_database": "bambu_pla"
+                    "default_database": "bambu_pla",
                 },
                 "transparency": {
                     "enabled": False,
                     "opacity_levels": [0.33, 0.67, 1.0],
                     "base_layer_optimization": False,
                     "gradient_processing": False,
-                    "min_savings_threshold": 0.3
+                    "min_savings_threshold": 0.3,
                 },
                 "export": {
                     "default_formats": ["stl", "instructions", "cost_report"],
                     "project_name": "bananaforge_model",
-                    "generate_preview": False
+                    "generate_preview": False,
                 },
                 "loss_weights": {
                     "perceptual": 1.0,
                     "color": 1.0,
                     "smoothness": 0.1,
-                    "consistency": 0.5
+                    "consistency": 0.5,
                 },
                 "output": {
                     "directory": "./output",
                     "compress_files": False,
-                    "keep_intermediate": False
-                }
+                    "keep_intermediate": False,
+                },
             }
 
         # Save configuration to file
-        with open(output, 'w') as f:
+        with open(output, "w") as f:
             json.dump(config, f, indent=2)
 
         if transparency_optimized:
@@ -1447,7 +1617,9 @@ def init_config(output, transparency_optimized):
             click.echo(f"Standard configuration created at: {output}")
             click.echo("To enable transparency features, use --transparency-optimized")
 
-        logger.info(f"Initialized config file at {output} (transparency_optimized={transparency_optimized})")
+        logger.info(
+            f"Initialized config file at {output} (transparency_optimized={transparency_optimized})"
+        )
 
     except Exception as e:
         logger.error(f"Error initializing config: {e}", exc_info=True)
