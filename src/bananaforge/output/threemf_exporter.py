@@ -14,9 +14,7 @@ https://github.com/3MFConsortium/spec_core/blob/master/3MF%20Core%20Specificatio
 
 import io
 import json
-import logging
 import struct
-import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
@@ -568,7 +566,6 @@ class BambuProductionExporter:
             # Add triangles WITH material assignments for generic 3MF
             layer_materials = material_data.get("layer_materials", {})
             if layer_materials:
-                triangle_count = len(geometry_data["triangles"])
                 material_count = len(layer_materials)
 
                 for i, (v1, v2, v3) in enumerate(geometry_data["triangles"]):
@@ -943,7 +940,6 @@ class BambuProductionExporter:
         self, geometry_data: Dict[str, Any], material_data: Dict[str, Any]
     ) -> str:
         """Generate object model by replacing mesh data in working template."""
-        import xml.etree.ElementTree as ET
         from pathlib import Path
 
         # Try multiple possible paths for the template
@@ -1521,10 +1517,6 @@ class BambuProductionExporter:
             # Calculate Z height matching SwapInstructionGenerator logic
             # Layer 0 = initial_layer_height, Layer 1+ = initial_layer_height + (layer_idx * layer_height)
             initial_layer_height = 0.16  # From instructions
-            if layer_idx == 0:
-                z_height = initial_layer_height
-            else:
-                z_height = initial_layer_height + (layer_idx * layer_height)
 
             # Check if material changed
             if prev_material and material_id != prev_material:
@@ -1573,7 +1565,7 @@ class BambuProductionExporter:
             material = self.material_db.get_material(material_id)
             if material and hasattr(material, "color_hex"):
                 return material.color_hex
-        except:
+        except Exception:
             pass
 
         # Fallback colors based on material name
@@ -1610,11 +1602,9 @@ class BambuProductionExporter:
     ) -> None:
         """Generate proper 512x512 PNG thumbnails for Bambu Studio."""
         try:
-            import io
             import os
 
-            import numpy as np
-            from PIL import Image, ImageDraw
+            from PIL import Image
 
             # Try to get the original image for preview generation
             source_image_path = optimization_results.get("source_image_path")
@@ -1655,7 +1645,7 @@ class BambuProductionExporter:
         self._add_placeholder_thumbnails(zip_file)
 
     def _add_image_thumbnail(
-        self, zip_file: zipfile.ZipFile, path: str, image: "Image.Image"
+        self, zip_file: zipfile.ZipFile, path: str, image: Any
     ) -> None:
         """Add a PIL image as a thumbnail to the ZIP file."""
         import io
@@ -1687,7 +1677,7 @@ class BambuProductionExporter:
                 draw.text(
                     (256, 256), "BananaForge", fill=(255, 255, 255, 255), anchor="mm"
                 )
-            except:
+            except Exception:
                 pass  # Skip text if font not available
 
             # Save to buffer and add to all thumbnail locations
