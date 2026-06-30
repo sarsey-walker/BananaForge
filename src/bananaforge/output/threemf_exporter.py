@@ -17,7 +17,6 @@ import json
 import struct
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from xml.dom import minidom
@@ -26,6 +25,8 @@ import torch
 
 from ..materials.database import MaterialDatabase
 from ..utils.logging import get_logger
+from .export_types import LayerMaterial as LayerMaterial
+from .export_types import ThreeMFExportConfig as ThreeMFExportConfig
 from .package_xml import ContentTypesGenerator as ContentTypesGenerator
 from .package_xml import RelationshipsGenerator as RelationshipsGenerator
 from .package_xml import ThreeMFNamespaceManager as ThreeMFNamespaceManager
@@ -71,27 +72,6 @@ __all__ = [
     "ThreeMFSwapInstructionGenerator",
     "TransparencyValidator",
 ]
-
-
-@dataclass
-class LayerMaterial:
-    """Represents material assignment for a specific layer."""
-
-    layer_index: int
-    material_id: str
-    transparency: float = 1.0
-    layer_height: float = 0.2
-
-
-@dataclass
-class ThreeMFExportConfig:
-    """Configuration for 3MF export options."""
-
-    bambu_compatible: bool = False
-    include_metadata: bool = True
-    include_thumbnail: bool = False
-    compress_xml: bool = True
-    validate_output: bool = True
 
 
 class ModelXMLGenerator:
