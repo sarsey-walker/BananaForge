@@ -61,6 +61,19 @@ bananaforge convert INPUT_IMAGE [OPTIONS]
 - `--transparency-threshold FLOAT` - Minimum transparency savings threshold (default: 0.3)
 - `--max-materials INT` - Maximum number of materials (default: 4)
 
+#### Ordered Color Layers
+- `--ordered-color-layers` - Generate deterministic cumulative layers in the color order you provide
+- `--color-layer-order LIST` - Comma-separated `#RRGGBB` colors, from bottom to top; requires at least 2 colors
+- `--color-layer-count INT` - Number of model layers to print for each ordered color (default: 1)
+
+Ordered color layers are not limited to any fixed palette. For example,
+`#000000,#FFFFFF,#FFD700` creates black, then white, then yellow layers, but
+you can pass any 2 or more hex colors. Each requested color is mapped to the
+nearest selected material, so set `--max-materials` high enough and provide a
+material database that contains suitable filament colors. This mode disables
+transparency optimization and skips the normal optimizer because the layer
+stack is generated directly from the requested order.
+
 #### Model Parameters
 - `--max-layers INT` - Maximum number of layers (default: 15)
 - `--layer-height FLOAT` - Layer height in mm (default: 0.08)
@@ -124,6 +137,17 @@ bananaforge convert photo.jpg \
   --device cuda \
   --mixed-precision \
   --export-format stl,instructions,transparency_analysis
+```
+
+#### Ordered Color Layer Stack
+```bash
+bananaforge convert artwork.png \
+  --ordered-color-layers \
+  --color-layer-order "#000000,#FFFFFF,#FFD700" \
+  --color-layer-count 2 \
+  --max-materials 3 \
+  --materials ./materials.csv \
+  --export-format stl,instructions,3mf
 ```
 
 #### 🌈 Complete Professional 3MF Workflow

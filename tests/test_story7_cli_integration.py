@@ -123,6 +123,9 @@ class TestCLITransparencyIntegration:
             assert (
                 len(transparency_params) >= 0
             ), "Should have transparency-related parameters"
+            assert "ordered_color_layers" in params
+            assert "color_layer_order" in params
+            assert "color_layer_count" in params
 
         except ImportError:
             pytest.skip("CLI module not available for testing")

@@ -32,6 +32,14 @@ bananaforge convert photo.jpg --materials materials.csv
 
 # With transparency mixing for fewer material swaps
 bananaforge convert photo.jpg --enable-transparency --materials materials.csv --max-materials 6
+
+# With an explicit bottom-to-top color layer order
+bananaforge convert artwork.png \
+  --ordered-color-layers \
+  --color-layer-order "#000000,#FFFFFF,#FFD700" \
+  --color-layer-count 2 \
+  --materials materials.csv \
+  --max-materials 3
 ```
 
 ## 🎨 Advanced Transparency Features
@@ -64,6 +72,27 @@ bananaforge convert image.jpg \
   --export-format "stl,instructions,cost_report,transparency_analysis" \
   --output ./transparent_model/
 ```
+
+## 🎚 Ordered Color Layers
+
+For prints where you want one material per layer block instead of filament
+changes inside the same layer, use ordered color layers. The color list is not
+fixed to black, white, and yellow: pass any 2 or more `#RRGGBB` colors in the
+bottom-to-top order you want.
+
+```bash
+bananaforge convert artwork.png \
+  --ordered-color-layers \
+  --color-layer-order "#000000,#FFFFFF,#FFD700" \
+  --color-layer-count 2 \
+  --materials materials.csv \
+  --max-materials 3
+```
+
+Each color is mapped to the nearest selected material. Increase
+`--max-materials` or adjust `--materials` if two requested colors resolve to the
+same filament. This mode disables transparency optimization and generates the
+layer stack deterministically from the requested order.
 
 ## 🛠 Installation
 

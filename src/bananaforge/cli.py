@@ -6,7 +6,7 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Sequence, Tuple
 
 import click
 import cv2
@@ -52,6 +52,130 @@ def _apply_random_seed(random_seed: int) -> None:
     torch.manual_seed(random_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(random_seed)
+
+
+def _parse_hex_color_order(color_layer_order: str) -> List[Tuple[int, int, int]]:
+    """Parse a comma-separated list of #RRGGBB colors."""
+    if not color_layer_order:
+        raise click.ClickException(
+            "--color-layer-order is required when --ordered-color-layers is enabled"
+        )
+
+    color_tokens = [token.strip() for token in color_layer_order.split(",")]
+    if any(not token for token in color_tokens):
+        raise click.ClickException(
+            "--color-layer-order must be a comma-separated list of #RRGGBB colors"
+        )
+    if len(color_tokens) < 2:
+        raise click.ClickException("--color-layer-order must include at least 2 colors")
+
+    parsed_colors: List[Tuple[int, int, int]] = []
+    seen_colors = set()
+    for token in color_tokens:
+        if len(token) != 7 or not token.startswith("#"):
+            raise click.ClickException(
+                f"Invalid color '{token}'. Use #RRGGBB values in --color-layer-order"
+            )
+        hex_digits = token[1:]
+        try:
+            color = hex_to_rgb(token)
+        except ValueError as exc:
+            raise click.ClickException(
+                f"Invalid color '{token}'. Use #RRGGBB values in --color-layer-order"
+            ) from exc
+        if len(hex_digits) != 6:
+            raise click.ClickException(
+                f"Invalid color '{token}'. Use #RRGGBB values in --color-layer-order"
+            )
+        normalized = token.upper()
+        if normalized in seen_colors:
+            raise click.ClickException(
+                f"Duplicate color '{token}' in --color-layer-order"
+            )
+        seen_colors.add(normalized)
+        parsed_colors.append(color)
+
+    return parsed_colors
+
+
+def _map_ordered_colors_to_materials(
+    ordered_colors_rgb: Sequence[Tuple[int, int, int]],
+    selected_colors: torch.Tensor,
+    selected_materials: Sequence[str],
+) -> List[int]:
+    """Map requested RGB colors to the nearest selected material color."""
+    if selected_colors.numel() == 0:
+        raise click.ClickException("No selected materials are available")
+
+    selected_colors_cpu = selected_colors.detach().cpu().float()
+    if selected_colors_cpu.max().item() > 1.0:
+        selected_colors_cpu = selected_colors_cpu / 255.0
+
+    ordered_colors = torch.tensor(ordered_colors_rgb, dtype=torch.float32) / 255.0
+    distances = torch.cdist(ordered_colors, selected_colors_cpu)
+    material_indices = torch.argmin(distances, dim=1).tolist()
+
+    if len(set(material_indices)) != len(material_indices):
+        mapped_materials = [
+            selected_materials[index] if index < len(selected_materials) else str(index)
+            for index in material_indices
+        ]
+        raise click.ClickException(
+            "Ordered colors must map to distinct selected materials; got "
+            f"{', '.join(mapped_materials)}. Increase --max-materials or adjust "
+            "--color-layer-order."
+        )
+
+    return [int(index) for index in material_indices]
+
+
+def _build_ordered_color_layers(
+    target_image_np: np.ndarray,
+    ordered_colors_rgb: Sequence[Tuple[int, int, int]],
+    ordered_material_indices: Sequence[int],
+    color_layer_count: int,
+    device: str,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Build cumulative material layers from an explicit color order."""
+    if color_layer_count < 1:
+        raise click.ClickException("--color-layer-count must be at least 1")
+    if len(ordered_colors_rgb) != len(ordered_material_indices):
+        raise click.ClickException(
+            "Ordered color count must match ordered material count"
+        )
+
+    target_pixels = target_image_np.astype(np.float32)
+    palette = np.asarray(ordered_colors_rgb, dtype=np.float32)
+    distances = np.sum(
+        (target_pixels[:, :, None, :] - palette[None, None, :, :]) ** 2,
+        axis=-1,
+    )
+    target_order_indices = np.argmin(distances, axis=-1).astype(np.int64)
+
+    height_values = (target_order_indices + 1) * color_layer_count
+    height_map = (
+        torch.from_numpy(height_values.astype(np.float32))
+        .unsqueeze(0)
+        .unsqueeze(0)
+        .to(device)
+    )
+
+    num_color_layers = len(ordered_colors_rgb) * color_layer_count
+    assignments = torch.full(
+        (num_color_layers, target_image_np.shape[0], target_image_np.shape[1]),
+        fill_value=-1,
+        dtype=torch.long,
+        device=device,
+    )
+
+    target_order_tensor = torch.from_numpy(target_order_indices).to(device)
+    for order_index, material_index in enumerate(ordered_material_indices):
+        active_mask = target_order_tensor >= order_index
+        for repeat_index in range(color_layer_count):
+            layer_index = (order_index * color_layer_count) + repeat_index
+            assignments[layer_index][active_mask] = int(material_index)
+
+    return height_map, assignments
 
 
 def _config_default(ctx, parameter_name: str, config_key, current_value):
@@ -276,6 +400,27 @@ def cli(ctx, verbose: bool, quiet: bool, config):
     help="Custom opacity levels (comma-separated, default: 0.33,0.67,1.0)",
 )
 @click.option(
+    "--ordered-color-layers",
+    is_flag=True,
+    help="Generate cumulative layers in an explicit color order",
+)
+@click.option(
+    "--color-layer-order",
+    type=str,
+    default="",
+    help=(
+        "Comma-separated color order for --ordered-color-layers, "
+        'e.g. "#000000,#FFFFFF,#FFD700"'
+    ),
+)
+@click.option(
+    "--color-layer-count",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of physical layers to print for each ordered color",
+)
+@click.option(
     "--optimize-base-layers",
     is_flag=True,
     help="Optimize base layer colors for maximum contrast",
@@ -348,6 +493,9 @@ def convert(
     random_seed,
     enable_transparency,
     opacity_levels,
+    ordered_color_layers,
+    color_layer_order,
+    color_layer_count,
     optimize_base_layers,
     enable_gradients,
     transparency_threshold,
@@ -419,6 +567,39 @@ def convert(
         opacity_levels = _config_default(
             ctx, "opacity_levels", "transparency.opacity_levels", opacity_levels
         )
+        ordered_color_layers = _config_default(
+            ctx,
+            "ordered_color_layers",
+            "ordered_color_layers.enabled",
+            ordered_color_layers,
+        )
+        color_layer_order = _config_default(
+            ctx,
+            "color_layer_order",
+            "ordered_color_layers.color_order",
+            color_layer_order,
+        )
+        color_layer_count = _config_default(
+            ctx,
+            "color_layer_count",
+            "ordered_color_layers.layer_count",
+            color_layer_count,
+        )
+        if color_layer_count < 1:
+            raise click.ClickException("--color-layer-count must be at least 1")
+        parsed_color_layer_order = None
+        if ordered_color_layers:
+            parsed_color_layer_order = _parse_hex_color_order(color_layer_order)
+            if enable_transparency:
+                click.echo(
+                    "--ordered-color-layers disables transparency optimization; "
+                    "using explicit material layers instead."
+                )
+                enable_transparency = False
+        elif color_layer_order:
+            raise click.ClickException(
+                "--color-layer-order requires --ordered-color-layers"
+            )
         optimize_base_layers = _config_default(
             ctx,
             "optimize_base_layers",
@@ -688,6 +869,25 @@ def convert(
             raise click.ClickException("No suitable materials found for image")
 
         logger.info(f"Selected {len(selected_materials)} materials")
+        ordered_material_indices = None
+        if parsed_color_layer_order:
+            ordered_material_indices = _map_ordered_colors_to_materials(
+                parsed_color_layer_order,
+                selected_colors,
+                selected_materials,
+            )
+            ordered_materials = [
+                selected_materials[index] for index in ordered_material_indices
+            ]
+            click.echo(
+                "Ordered color layers: "
+                + " -> ".join(
+                    f"#{r:02X}{g:02X}{b:02X}={material_id}"
+                    for (r, g, b), material_id in zip(
+                        parsed_color_layer_order, ordered_materials
+                    )
+                )
+            )
 
         # 🌈 Initialize Transparency Features (New in v1.0)
         transparency_result = None
@@ -860,18 +1060,22 @@ def convert(
                 click.echo(f" Step {step}/{iterations}, Loss: {total_loss:.4f}")
 
         # Run optimization
-        click.echo("Starting optimization...")
-        with click.progressbar(length=iterations, label="Optimizing") as bar:
+        if parsed_color_layer_order:
+            click.echo("Skipping optimization for ordered color layers...")
+        else:
+            click.echo("Starting optimization...")
+            with click.progressbar(length=iterations, label="Optimizing") as bar:
 
-            def progress_wrapper(step, loss_dict, pred_image, height_map):
-                bar.update(10)  # Update by 10 since callback is called every 10 steps
-                progress_callback(step, loss_dict, pred_image, height_map)
+                def progress_wrapper(step, loss_dict, pred_image, height_map):
+                    # Update by 10 since callback is called every 10 steps.
+                    bar.update(10)
+                    progress_callback(step, loss_dict, pred_image, height_map)
 
-            optimizer.optimize(
-                target_image=processing_image,  # Use processing image
-                material_colors=selected_colors,
-                callback=progress_wrapper,
-            )
+                optimizer.optimize(
+                    target_image=processing_image,  # Use processing image
+                    material_colors=selected_colors,
+                    callback=progress_wrapper,
+                )
 
         # Get optimized results at processing resolution
         (
@@ -983,6 +1187,31 @@ def convert(
             .squeeze(0)
             .to(final_material_assignments_processing.dtype)
         )  # Remove batch dim and restore dtype
+
+        if parsed_color_layer_order:
+            click.echo("Generating ordered color layer model...")
+            (
+                final_height_map_full,
+                final_material_assignments_full,
+            ) = _build_ordered_color_layers(
+                target_image_np=target_image_np,
+                ordered_colors_rgb=parsed_color_layer_order,
+                ordered_material_indices=ordered_material_indices,
+                color_layer_count=color_layer_count,
+                device=device,
+            )
+            processing_ordered_height = torch.nn.functional.interpolate(
+                final_height_map_full,
+                size=(processing_h, processing_w),
+                mode="nearest",
+            )
+            final_height_map_processing = processing_ordered_height
+            final_image = processing_image
+            click.echo(
+                "Ordered color layer model generated with "
+                f"{len(parsed_color_layer_order)} colors and "
+                f"{color_layer_count} layer(s) per color"
+            )
 
         click.echo(f"Final heightmap resolution: {final_height_map_full.shape}")
         click.echo(

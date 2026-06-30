@@ -593,7 +593,9 @@ class STLGenerator:
 
         # Get corresponding colors
         colors_rgb = material_colors.cpu().numpy() * 255
-        assigned_colors = colors_rgb[top_material_indices.cpu().numpy()]
+        color_indices = top_material_indices.cpu().numpy()
+        color_indices = np.clip(color_indices, 0, len(colors_rgb) - 1)
+        assigned_colors = colors_rgb[color_indices]
 
         vertex_colors[:, :3] = assigned_colors.astype(np.uint8)
 

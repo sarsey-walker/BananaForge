@@ -91,6 +91,17 @@ class SwapInstructionGenerator:
             unique_materials, counts = torch.unique(
                 layer_assignment, return_counts=True
             )
+            valid_materials_mask = unique_materials >= 0
+            unique_materials = unique_materials[valid_materials_mask]
+            counts = counts[valid_materials_mask]
+            if len(unique_materials) == 0:
+                fallback_material = (
+                    layer_materials[-1]
+                    if layer_materials
+                    else material_ids[0] if material_ids else "unknown"
+                )
+                layer_materials.append(fallback_material)
+                continue
             dominant_material_idx = unique_materials[torch.argmax(counts)].item()
 
             if dominant_material_idx < len(material_ids):
@@ -452,6 +463,11 @@ class ProjectFileGenerator:
 
             # Find dominant material for this layer
             unique_materials, counts = np.unique(layer_assignment, return_counts=True)
+            valid_materials_mask = unique_materials >= 0
+            unique_materials = unique_materials[valid_materials_mask]
+            counts = counts[valid_materials_mask]
+            if len(unique_materials) == 0:
+                continue
             dominant_material_idx = unique_materials[np.argmax(counts)]
 
             if dominant_material_idx < len(material_ids):

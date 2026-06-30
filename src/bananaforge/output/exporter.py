@@ -455,6 +455,11 @@ class ModelExporter:
             unique_materials, counts = torch.unique(
                 layer_assignment, return_counts=True
             )
+            valid_materials_mask = unique_materials >= 0
+            unique_materials = unique_materials[valid_materials_mask]
+            counts = counts[valid_materials_mask]
+            if len(unique_materials) == 0:
+                continue
             dominant_material_idx = unique_materials[torch.argmax(counts)].item()
 
             if dominant_material_idx < len(material_ids):
