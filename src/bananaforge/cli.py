@@ -5,8 +5,9 @@ import logging
 import os
 import random
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import click
 import cv2
@@ -40,6 +41,55 @@ except ImportError:
 LARGE_MESH_WARNING_TRIANGLES = 2_000_000
 LARGE_MESH_WARNING_BYTES = 100 * 1024 * 1024
 MESH_EXPORT_FORMATS = {"stl", "3mf", "bambu", "prusa", "layer_stls", "preview"}
+VALID_EXPORT_FORMATS = (
+    "stl",
+    "3mf",
+    "instructions",
+    "hueforge",
+    "prusa",
+    "bambu",
+    "cost_report",
+    "transparency_analysis",
+)
+
+
+@dataclass(frozen=True)
+class PreparedImages:
+    """Image tensors and dimensions prepared for convert processing."""
+
+    target_image: torch.Tensor
+    processing_image: torch.Tensor
+    orig_w: int
+    orig_h: int
+    target_w: int
+    target_h: int
+    processing_w: int
+    processing_h: int
+    target_stl_resolution: int
+    computed_processing_size: int
+    processing_reduction_factor: int
+
+
+@dataclass(frozen=True)
+class SelectedMaterials:
+    """Selected material data prepared for optimization/export."""
+
+    material_db: MaterialDatabase
+    color_matcher: ColorMatcher
+    selected_materials: List[str]
+    selected_colors: torch.Tensor
+    color_mapping: torch.Tensor
+    ordered_material_indices: Optional[List[int]]
+
+
+@dataclass(frozen=True)
+class PreparedHeightMap:
+    """Heightmap artifacts prepared for optimization/export."""
+
+    target_image_np: np.ndarray
+    target_height_logits: torch.Tensor
+    target_global_logits: torch.Tensor
+    processing_height_logits: torch.Tensor
 
 
 def _apply_random_seed(random_seed: int) -> None:
@@ -197,6 +247,412 @@ def _config_default(ctx, parameter_name: str, config_key, current_value):
     if isinstance(value, (list, tuple)) and isinstance(current_value, str):
         return ",".join(str(item) for item in value)
     return value
+
+
+def _parse_export_format_list(export_format: str) -> List[str]:
+    """Parse and validate comma-separated export formats."""
+    export_format_list = [fmt.strip() for fmt in export_format.split(",")]
+    invalid_formats = [
+        fmt for fmt in export_format_list if fmt not in VALID_EXPORT_FORMATS
+    ]
+
+    if invalid_formats:
+        raise click.ClickException(
+            "Invalid export format(s): "
+            f"{', '.join(invalid_formats)}. Valid formats: "
+            f"{', '.join(VALID_EXPORT_FORMATS)}"
+        )
+
+    return export_format_list
+
+
+def _resolve_convert_options(
+    ctx,
+    logger: logging.Logger,
+    **options: Any,
+) -> Dict[str, Any]:
+    """Apply config defaults and validate convert command options."""
+    resolved = dict(options)
+
+    resolved["output"] = _config_default(
+        ctx, "output", "output.directory", resolved["output"]
+    )
+    resolved["max_materials"] = _config_default(
+        ctx,
+        "max_materials",
+        "materials.max_materials",
+        resolved["max_materials"],
+    )
+    resolved["max_layers"] = _config_default(
+        ctx, "max_layers", "model.max_layers", resolved["max_layers"]
+    )
+    resolved["layer_height"] = _config_default(
+        ctx, "layer_height", "model.layer_height", resolved["layer_height"]
+    )
+    resolved["initial_layer_height"] = _config_default(
+        ctx,
+        "initial_layer_height",
+        ("model.initial_layer_height", "model.base_height"),
+        resolved["initial_layer_height"],
+    )
+    resolved["nozzle_diameter"] = _config_default(
+        ctx,
+        "nozzle_diameter",
+        "model.nozzle_diameter",
+        resolved["nozzle_diameter"],
+    )
+    resolved["physical_size"] = _config_default(
+        ctx, "physical_size", "model.physical_size", resolved["physical_size"]
+    )
+    resolved["max_triangles"] = _config_default(
+        ctx, "max_triangles", "export.max_triangles", resolved["max_triangles"]
+    )
+    resolved["bottom_mode"] = _config_default(
+        ctx, "bottom_mode", "export.bottom_mode", resolved["bottom_mode"]
+    )
+    if resolved["bottom_mode"] not in {"simplified", "full", "none"}:
+        raise click.ClickException("--bottom-mode must be one of: simplified, full, none")
+
+    resolved["iterations"] = _config_default(
+        ctx, "iterations", "optimization.iterations", resolved["iterations"]
+    )
+    resolved["learning_rate"] = _config_default(
+        ctx,
+        "learning_rate",
+        "optimization.learning_rate",
+        resolved["learning_rate"],
+    )
+    resolved["device"] = _config_default(
+        ctx, "device", "optimization.device", resolved["device"]
+    )
+    resolved["export_format"] = _config_default(
+        ctx, "export_format", "export.default_formats", resolved["export_format"]
+    )
+    resolved["project_name"] = _config_default(
+        ctx, "project_name", "export.project_name", resolved["project_name"]
+    )
+    resolved["resolution"] = _config_default(
+        ctx, "resolution", "model.resolution", resolved["resolution"]
+    )
+    resolved["preview"] = _config_default(
+        ctx, "preview", "export.generate_preview", resolved["preview"]
+    )
+    resolved["random_seed"] = _config_default(
+        ctx, "random_seed", "random_seed", resolved["random_seed"]
+    )
+    if resolved["random_seed"] < 0:
+        raise click.ClickException("--random-seed must be zero or positive")
+    _apply_random_seed(resolved["random_seed"])
+
+    resolved["enable_transparency"] = _config_default(
+        ctx,
+        "enable_transparency",
+        "transparency.enabled",
+        resolved["enable_transparency"],
+    )
+    resolved["opacity_levels"] = _config_default(
+        ctx,
+        "opacity_levels",
+        "transparency.opacity_levels",
+        resolved["opacity_levels"],
+    )
+    resolved["ordered_color_layers"] = _config_default(
+        ctx,
+        "ordered_color_layers",
+        "ordered_color_layers.enabled",
+        resolved["ordered_color_layers"],
+    )
+    resolved["color_layer_order"] = _config_default(
+        ctx,
+        "color_layer_order",
+        "ordered_color_layers.color_order",
+        resolved["color_layer_order"],
+    )
+    resolved["color_layer_count"] = _config_default(
+        ctx,
+        "color_layer_count",
+        "ordered_color_layers.layer_count",
+        resolved["color_layer_count"],
+    )
+    if resolved["color_layer_count"] < 1:
+        raise click.ClickException("--color-layer-count must be at least 1")
+
+    parsed_color_layer_order = None
+    if resolved["ordered_color_layers"]:
+        parsed_color_layer_order = _parse_hex_color_order(
+            resolved["color_layer_order"]
+        )
+        if resolved["enable_transparency"]:
+            click.echo(
+                "--ordered-color-layers disables transparency optimization; "
+                "using explicit material layers instead."
+            )
+            resolved["enable_transparency"] = False
+    elif resolved["color_layer_order"]:
+        raise click.ClickException("--color-layer-order requires --ordered-color-layers")
+    resolved["parsed_color_layer_order"] = parsed_color_layer_order
+
+    resolved["optimize_base_layers"] = _config_default(
+        ctx,
+        "optimize_base_layers",
+        "transparency.base_layer_optimization",
+        resolved["optimize_base_layers"],
+    )
+    resolved["enable_gradients"] = _config_default(
+        ctx,
+        "enable_gradients",
+        "transparency.gradient_processing",
+        resolved["enable_gradients"],
+    )
+    resolved["transparency_threshold"] = _config_default(
+        ctx,
+        "transparency_threshold",
+        "transparency.min_savings_threshold",
+        resolved["transparency_threshold"],
+    )
+    resolved["mixed_precision"] = _config_default(
+        ctx,
+        "mixed_precision",
+        "optimization.mixed_precision",
+        resolved["mixed_precision"],
+    )
+    resolved["include_3mf_metadata"] = _config_default(
+        ctx,
+        "include_3mf_metadata",
+        "export.include_transparency_metadata",
+        resolved["include_3mf_metadata"],
+    )
+
+    requested_device = resolved["device"]
+    device_resolution = resolve_device(resolved["device"])
+    resolved["device"] = device_resolution.selected
+    if requested_device == "auto":
+        if device_resolution.failed_devices:
+            failures = "; ".join(
+                f"{failed_device}: {reason}"
+                for failed_device, reason in device_resolution.failed_devices
+            )
+            click.echo(f"Using {resolved['device']} device ({failures})", err=True)
+        logger.info("Resolved auto device to %s", resolved["device"])
+    elif device_resolution.fallback:
+        click.echo(
+            f"Warning: requested device '{requested_device}' is not usable "
+            f"({device_resolution.reason}); falling back to CPU.",
+            err=True,
+        )
+        logger.warning(
+            "Requested device %s is not usable; using %s",
+            requested_device,
+            resolved["device"],
+        )
+    else:
+        logger.info("Using %s device", resolved["device"])
+
+    export_format_list = _parse_export_format_list(resolved["export_format"])
+    if resolved["bambu_compatible"] and "3mf" not in export_format_list:
+        export_format_list.append("3mf")
+        click.echo(
+            "🔧 Bambu compatibility enabled: Added 3MF export format (EXPERIMENTAL)"
+        )
+    resolved["export_format_list"] = export_format_list
+    logger.info("Export formats: %s", ", ".join(export_format_list))
+
+    return resolved
+
+
+def _calculate_image_dimensions(
+    orig_w: int,
+    orig_h: int,
+    physical_size: float,
+    nozzle_diameter: float,
+) -> Dict[str, int]:
+    """Calculate target and processing dimensions while preserving aspect ratio."""
+    target_stl_resolution = int(round(physical_size * 2 / nozzle_diameter))
+    if target_stl_resolution > 2000:
+        processing_reduction_factor = 4
+    elif target_stl_resolution > 1500:
+        processing_reduction_factor = 3
+    else:
+        processing_reduction_factor = 2
+
+    computed_processing_size = target_stl_resolution // processing_reduction_factor
+
+    if orig_w >= orig_h:
+        target_scale = target_stl_resolution / orig_w
+        processing_scale = computed_processing_size / orig_w
+    else:
+        target_scale = target_stl_resolution / orig_h
+        processing_scale = computed_processing_size / orig_h
+
+    return {
+        "orig_w": orig_w,
+        "orig_h": orig_h,
+        "target_w": int(round(orig_w * target_scale)),
+        "target_h": int(round(orig_h * target_scale)),
+        "processing_w": int(round(orig_w * processing_scale)),
+        "processing_h": int(round(orig_h * processing_scale)),
+        "target_stl_resolution": target_stl_resolution,
+        "computed_processing_size": computed_processing_size,
+        "processing_reduction_factor": processing_reduction_factor,
+    }
+
+
+def _prepare_convert_images(
+    input_image: str,
+    image_processor: ImageProcessor,
+    physical_size: float,
+    nozzle_diameter: float,
+) -> PreparedImages:
+    """Load target and processing image tensors for the convert pipeline."""
+    from PIL import Image as PILImage
+
+    with PILImage.open(input_image) as pil_img:
+        orig_w, orig_h = pil_img.size
+
+    dimensions = _calculate_image_dimensions(
+        orig_w=orig_w,
+        orig_h=orig_h,
+        physical_size=physical_size,
+        nozzle_diameter=nozzle_diameter,
+    )
+
+    target_image = image_processor.load_image(
+        input_image,
+        target_size=(dimensions["target_h"], dimensions["target_w"]),
+        maintain_aspect=False,
+    )
+    processing_image = image_processor.load_image(
+        input_image,
+        target_size=(dimensions["processing_h"], dimensions["processing_w"]),
+        maintain_aspect=False,
+    )
+
+    return PreparedImages(
+        target_image=target_image,
+        processing_image=processing_image,
+        **dimensions,
+    )
+
+
+def _load_material_database(materials: Optional[str]) -> MaterialDatabase:
+    """Load a material database from file or use the default Bambu PLA set."""
+    if not materials:
+        click.echo("No material file specified, using default Bambu Lab PLA set")
+        return DefaultMaterials.create_bambu_basic_pla()
+
+    material_db = MaterialDatabase()
+    if materials.endswith(".csv"):
+        material_db.load_from_csv(materials)
+    elif materials.endswith(".json"):
+        material_db.load_from_json(materials)
+    else:
+        raise click.ClickException("Material file must be CSV or JSON")
+    return material_db
+
+
+def _select_materials_for_image(
+    material_db: MaterialDatabase,
+    processing_image: torch.Tensor,
+    max_materials: int,
+    device: str,
+    enable_transparency: bool,
+    parsed_color_layer_order: Optional[Sequence[Tuple[int, int, int]]],
+) -> SelectedMaterials:
+    """Select materials for the image and resolve ordered color mappings."""
+    color_matcher = ColorMatcher(
+        material_db, device, enable_transparency=enable_transparency
+    )
+    selected_materials, selected_colors, color_mapping = (
+        color_matcher.optimize_material_selection(processing_image, max_materials)
+    )
+
+    if not selected_materials:
+        raise click.ClickException("No suitable materials found for image")
+
+    ordered_material_indices = None
+    if parsed_color_layer_order:
+        ordered_material_indices = _map_ordered_colors_to_materials(
+            parsed_color_layer_order,
+            selected_colors,
+            selected_materials,
+        )
+        ordered_materials = [
+            selected_materials[index] for index in ordered_material_indices
+        ]
+        click.echo(
+            "Ordered color layers: "
+            + " -> ".join(
+                f"#{r:02X}{g:02X}{b:02X}={material_id}"
+                for (r, g, b), material_id in zip(
+                    parsed_color_layer_order, ordered_materials
+                )
+            )
+        )
+
+    return SelectedMaterials(
+        material_db=material_db,
+        color_matcher=color_matcher,
+        selected_materials=selected_materials,
+        selected_colors=selected_colors,
+        color_mapping=color_mapping,
+        ordered_material_indices=ordered_material_indices,
+    )
+
+
+def _prepare_heightmap(
+    ctx,
+    target_image: torch.Tensor,
+    selected_colors: torch.Tensor,
+    max_layers: int,
+    layer_height: float,
+    num_init_rounds: int,
+    num_init_cluster_layers: int,
+    random_seed: int,
+    processing_w: int,
+    processing_h: int,
+    device: str,
+) -> PreparedHeightMap:
+    """Generate full-resolution heightmap data and processing-resolution logits."""
+    cfg = Config(
+        max_layers=max_layers,
+        layer_height=layer_height,
+        num_init_rounds=num_init_rounds,
+        num_init_cluster_layers=(
+            num_init_cluster_layers if num_init_cluster_layers != -1 else max_layers
+        ),
+        random_seed=random_seed,
+        background_color=(
+            ctx.obj["config"].get("background_color", "#000000")
+            if isinstance(ctx.obj["config"], dict)
+            else getattr(ctx.obj["config"], "background_color", "#000000")
+        ),
+    )
+    heightmap_generator = HeightMapGenerator(cfg, device)
+
+    target_image_np = target_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
+    target_image_np = (target_image_np * 255).astype(np.uint8)
+
+    background_tuple = hex_to_rgb(cfg.background_color)
+    material_colors_np = selected_colors.cpu().numpy()
+
+    target_height_logits_np, target_global_logits_np, _target_labels_np = (
+        heightmap_generator.generate(
+            target_image_np, background_tuple, material_colors_np
+        )
+    )
+
+    processing_height_logits_np = cv2.resize(
+        src=target_height_logits_np,
+        interpolation=cv2.INTER_NEAREST,
+        dsize=(processing_w, processing_h),
+    )
+
+    return PreparedHeightMap(
+        target_image_np=target_image_np,
+        target_height_logits=torch.from_numpy(target_height_logits_np).float(),
+        target_global_logits=torch.from_numpy(target_global_logits_np).float(),
+        processing_height_logits=torch.from_numpy(processing_height_logits_np).float(),
+    )
 
 
 def _format_bytes(size_bytes: int) -> str:
@@ -512,176 +968,64 @@ def convert(
         logger = logging.getLogger(__name__)
         logger.info(f"Starting conversion of {input_image}")
 
-        output = _config_default(ctx, "output", "output.directory", output)
-        max_materials = _config_default(
-            ctx, "max_materials", "materials.max_materials", max_materials
-        )
-        max_layers = _config_default(ctx, "max_layers", "model.max_layers", max_layers)
-        layer_height = _config_default(
-            ctx, "layer_height", "model.layer_height", layer_height
-        )
-        initial_layer_height = _config_default(
+        convert_options = _resolve_convert_options(
             ctx,
-            "initial_layer_height",
-            ("model.initial_layer_height", "model.base_height"),
-            initial_layer_height,
+            logger,
+            output=output,
+            max_materials=max_materials,
+            max_layers=max_layers,
+            layer_height=layer_height,
+            initial_layer_height=initial_layer_height,
+            nozzle_diameter=nozzle_diameter,
+            physical_size=physical_size,
+            max_triangles=max_triangles,
+            bottom_mode=bottom_mode,
+            iterations=iterations,
+            learning_rate=learning_rate,
+            device=device,
+            export_format=export_format,
+            project_name=project_name,
+            resolution=resolution,
+            preview=preview,
+            random_seed=random_seed,
+            enable_transparency=enable_transparency,
+            opacity_levels=opacity_levels,
+            ordered_color_layers=ordered_color_layers,
+            color_layer_order=color_layer_order,
+            color_layer_count=color_layer_count,
+            optimize_base_layers=optimize_base_layers,
+            enable_gradients=enable_gradients,
+            transparency_threshold=transparency_threshold,
+            mixed_precision=mixed_precision,
+            bambu_compatible=bambu_compatible,
+            include_3mf_metadata=include_3mf_metadata,
         )
-        nozzle_diameter = _config_default(
-            ctx, "nozzle_diameter", "model.nozzle_diameter", nozzle_diameter
-        )
-        physical_size = _config_default(
-            ctx, "physical_size", "model.physical_size", physical_size
-        )
-        max_triangles = _config_default(
-            ctx, "max_triangles", "export.max_triangles", max_triangles
-        )
-        bottom_mode = _config_default(
-            ctx, "bottom_mode", "export.bottom_mode", bottom_mode
-        )
-        if bottom_mode not in {"simplified", "full", "none"}:
-            raise click.ClickException(
-                "--bottom-mode must be one of: simplified, full, none"
-            )
-        iterations = _config_default(
-            ctx, "iterations", "optimization.iterations", iterations
-        )
-        learning_rate = _config_default(
-            ctx, "learning_rate", "optimization.learning_rate", learning_rate
-        )
-        device = _config_default(ctx, "device", "optimization.device", device)
-        export_format = _config_default(
-            ctx, "export_format", "export.default_formats", export_format
-        )
-        project_name = _config_default(
-            ctx, "project_name", "export.project_name", project_name
-        )
-        resolution = _config_default(ctx, "resolution", "model.resolution", resolution)
-        preview = _config_default(ctx, "preview", "export.generate_preview", preview)
-        random_seed = _config_default(ctx, "random_seed", "random_seed", random_seed)
-        if random_seed < 0:
-            raise click.ClickException("--random-seed must be zero or positive")
-        _apply_random_seed(random_seed)
-        enable_transparency = _config_default(
-            ctx, "enable_transparency", "transparency.enabled", enable_transparency
-        )
-        opacity_levels = _config_default(
-            ctx, "opacity_levels", "transparency.opacity_levels", opacity_levels
-        )
-        ordered_color_layers = _config_default(
-            ctx,
-            "ordered_color_layers",
-            "ordered_color_layers.enabled",
-            ordered_color_layers,
-        )
-        color_layer_order = _config_default(
-            ctx,
-            "color_layer_order",
-            "ordered_color_layers.color_order",
-            color_layer_order,
-        )
-        color_layer_count = _config_default(
-            ctx,
-            "color_layer_count",
-            "ordered_color_layers.layer_count",
-            color_layer_count,
-        )
-        if color_layer_count < 1:
-            raise click.ClickException("--color-layer-count must be at least 1")
-        parsed_color_layer_order = None
-        if ordered_color_layers:
-            parsed_color_layer_order = _parse_hex_color_order(color_layer_order)
-            if enable_transparency:
-                click.echo(
-                    "--ordered-color-layers disables transparency optimization; "
-                    "using explicit material layers instead."
-                )
-                enable_transparency = False
-        elif color_layer_order:
-            raise click.ClickException(
-                "--color-layer-order requires --ordered-color-layers"
-            )
-        optimize_base_layers = _config_default(
-            ctx,
-            "optimize_base_layers",
-            "transparency.base_layer_optimization",
-            optimize_base_layers,
-        )
-        enable_gradients = _config_default(
-            ctx,
-            "enable_gradients",
-            "transparency.gradient_processing",
-            enable_gradients,
-        )
-        transparency_threshold = _config_default(
-            ctx,
-            "transparency_threshold",
-            "transparency.min_savings_threshold",
-            transparency_threshold,
-        )
-        mixed_precision = _config_default(
-            ctx, "mixed_precision", "optimization.mixed_precision", mixed_precision
-        )
-        include_3mf_metadata = _config_default(
-            ctx,
-            "include_3mf_metadata",
-            "export.include_transparency_metadata",
-            include_3mf_metadata,
-        )
-
-        requested_device = device
-        device_resolution = resolve_device(device)
-        device = device_resolution.selected
-        if requested_device == "auto":
-            if device_resolution.failed_devices:
-                failures = "; ".join(
-                    f"{failed_device}: {reason}"
-                    for failed_device, reason in device_resolution.failed_devices
-                )
-                click.echo(f"Using {device} device ({failures})", err=True)
-            logger.info("Resolved auto device to %s", device)
-        elif device_resolution.fallback:
-            click.echo(
-                f"Warning: requested device '{requested_device}' is not usable "
-                f"({device_resolution.reason}); falling back to CPU.",
-                err=True,
-            )
-            logger.warning(
-                "Requested device %s is not usable; using %s",
-                requested_device,
-                device,
-            )
-        else:
-            logger.info("Using %s device", device)
-
-        # Parse and validate export formats
-        valid_export_formats = [
-            "stl",
-            "3mf",
-            "instructions",
-            "hueforge",
-            "prusa",
-            "bambu",
-            "cost_report",
-            "transparency_analysis",
-        ]
-        export_format_list = [fmt.strip() for fmt in export_format.split(",")]
-        invalid_formats = [
-            fmt for fmt in export_format_list if fmt not in valid_export_formats
-        ]
-
-        if invalid_formats:
-            raise click.ClickException(
-                f"Invalid export format(s): {', '.join(invalid_formats)}. Valid formats: {', '.join(valid_export_formats)}"
-            )
-
-        # Automatically add 3MF export when bambu-compatible is enabled
-        if bambu_compatible and "3mf" not in export_format_list:
-            export_format_list.append("3mf")
-            click.echo(
-                "🔧 Bambu compatibility enabled: Added 3MF export format (EXPERIMENTAL)"
-            )
-
-        logger.info(f"Export formats: {', '.join(export_format_list)}")
+        output = convert_options["output"]
+        max_materials = convert_options["max_materials"]
+        max_layers = convert_options["max_layers"]
+        layer_height = convert_options["layer_height"]
+        initial_layer_height = convert_options["initial_layer_height"]
+        nozzle_diameter = convert_options["nozzle_diameter"]
+        physical_size = convert_options["physical_size"]
+        max_triangles = convert_options["max_triangles"]
+        bottom_mode = convert_options["bottom_mode"]
+        iterations = convert_options["iterations"]
+        learning_rate = convert_options["learning_rate"]
+        device = convert_options["device"]
+        project_name = convert_options["project_name"]
+        resolution = convert_options["resolution"]
+        preview = convert_options["preview"]
+        random_seed = convert_options["random_seed"]
+        enable_transparency = convert_options["enable_transparency"]
+        opacity_levels = convert_options["opacity_levels"]
+        color_layer_count = convert_options["color_layer_count"]
+        optimize_base_layers = convert_options["optimize_base_layers"]
+        enable_gradients = convert_options["enable_gradients"]
+        transparency_threshold = convert_options["transparency_threshold"]
+        mixed_precision = convert_options["mixed_precision"]
+        include_3mf_metadata = convert_options["include_3mf_metadata"]
+        parsed_color_layer_order = convert_options["parsed_color_layer_order"]
+        export_format_list = convert_options["export_format_list"]
 
         # Initialize components
         image_processor = ImageProcessor(device)
@@ -760,68 +1104,34 @@ def convert(
                     logger.warning(f"Transparency detection failed but skipped: {e}")
 
         # Load material database
-        if materials:
-            material_db = MaterialDatabase()
-            if materials.endswith(".csv"):
-                material_db.load_from_csv(materials)
-            elif materials.endswith(".json"):
-                material_db.load_from_json(materials)
-            else:
-                raise click.ClickException("Material file must be CSV or JSON")
-        else:
-            click.echo("No material file specified, using default Bambu Lab PLA set")
-            material_db = DefaultMaterials.create_bambu_basic_pla()
+        material_db = _load_material_database(materials)
 
         logger.info(f"Loaded {len(material_db)} materials")
 
         # Load and preprocess image
         click.echo("Loading and preprocessing image...")
-
-        # Calculate resolution based on physical size and nozzle diameter
-        target_stl_resolution = int(round(physical_size * 2 / nozzle_diameter))
-
-        # Apply processing reduction factor to avoid memory issues
-        # Use larger reduction factor for very high resolutions
-        if target_stl_resolution > 2000:
-            processing_reduction_factor = 4  # Quarter resolution for very large targets
-        elif target_stl_resolution > 1500:
-            processing_reduction_factor = 3  # Third resolution for large targets
-        else:
-            processing_reduction_factor = 2  # Half resolution for normal targets
-
-        computed_processing_size = target_stl_resolution // processing_reduction_factor
+        prepared_images = _prepare_convert_images(
+            input_image=input_image,
+            image_processor=image_processor,
+            physical_size=physical_size,
+            nozzle_diameter=nozzle_diameter,
+        )
+        target_stl_resolution = prepared_images.target_stl_resolution
+        processing_reduction_factor = prepared_images.processing_reduction_factor
+        computed_processing_size = prepared_images.computed_processing_size
+        orig_w = prepared_images.orig_w
+        orig_h = prepared_images.orig_h
+        target_w = prepared_images.target_w
+        target_h = prepared_images.target_h
+        processing_w = prepared_images.processing_w
+        processing_h = prepared_images.processing_h
+        target_image = prepared_images.target_image
+        processing_image = prepared_images.processing_image
 
         click.echo(f"Target STL resolution: {target_stl_resolution} pixels")
         click.echo(
             f"Processing resolution: {computed_processing_size} pixels (reduced by factor of {processing_reduction_factor})"
         )
-
-        # Use image resizing that maintains aspect ratio
-        # First load the image to get its dimensions
-        from PIL import Image as PILImage
-
-        pil_img = PILImage.open(input_image)
-        orig_w, orig_h = pil_img.size
-
-        # Calculate scaling for FULL target resolution (for heightmap initialization)
-        if orig_w >= orig_h:
-            target_scale = target_stl_resolution / orig_w
-        else:
-            target_scale = target_stl_resolution / orig_h
-
-        # Compute target dimensions maintaining aspect ratio
-        target_w = int(round(orig_w * target_scale))
-        target_h = int(round(orig_h * target_scale))
-
-        # Calculate scaling for processing resolution (for optimization)
-        if orig_w >= orig_h:
-            processing_scale = computed_processing_size / orig_w
-        else:
-            processing_scale = computed_processing_size / orig_h
-
-        # Compute processing dimensions maintaining aspect ratio
-        processing_w = int(round(orig_w * processing_scale))
-        processing_h = int(round(orig_h * processing_scale))
 
         click.echo(f"Original image: {orig_w}x{orig_h}")
         click.echo(
@@ -838,56 +1148,25 @@ def convert(
                 bottom_mode=bottom_mode,
             )
 
-        # Load image at TARGET resolution for heightmap initialization
-        target_image = image_processor.load_image(
-            input_image,
-            target_size=(target_h, target_w),
-            maintain_aspect=False,  # Already calculated exact size
-        )
-
-        # Load image at PROCESSING resolution for optimization
-        processing_image = image_processor.load_image(
-            input_image,
-            target_size=(processing_h, processing_w),
-            maintain_aspect=False,  # Already calculated exact size
-        )
-
         # Debug: Print tensor dimensions to verify they match expected dimensions
         click.echo(f"Target image tensor shape: {target_image.shape}")
         click.echo(f"Processing image tensor shape: {processing_image.shape}")
 
         # Match materials to image colors (use processing image for efficiency)
         click.echo("Matching materials to image colors...")
-        color_matcher = ColorMatcher(
-            material_db, device, enable_transparency=enable_transparency
+        material_selection = _select_materials_for_image(
+            material_db=material_db,
+            processing_image=processing_image,
+            max_materials=max_materials,
+            device=device,
+            enable_transparency=enable_transparency,
+            parsed_color_layer_order=parsed_color_layer_order,
         )
-        selected_materials, selected_colors, color_mapping = (
-            color_matcher.optimize_material_selection(processing_image, max_materials)
-        )
-
-        if not selected_materials:
-            raise click.ClickException("No suitable materials found for image")
-
+        color_matcher = material_selection.color_matcher
+        selected_materials = material_selection.selected_materials
+        selected_colors = material_selection.selected_colors
+        ordered_material_indices = material_selection.ordered_material_indices
         logger.info(f"Selected {len(selected_materials)} materials")
-        ordered_material_indices = None
-        if parsed_color_layer_order:
-            ordered_material_indices = _map_ordered_colors_to_materials(
-                parsed_color_layer_order,
-                selected_colors,
-                selected_materials,
-            )
-            ordered_materials = [
-                selected_materials[index] for index in ordered_material_indices
-            ]
-            click.echo(
-                "Ordered color layers: "
-                + " -> ".join(
-                    f"#{r:02X}{g:02X}{b:02X}={material_id}"
-                    for (r, g, b), material_id in zip(
-                        parsed_color_layer_order, ordered_materials
-                    )
-                )
-            )
 
         # 🌈 Initialize Transparency Features (New in v1.0)
         transparency_result = None
@@ -986,50 +1265,27 @@ def convert(
 
         # Initialize Height Map Generator at TARGET resolution
         click.echo("Initializing height map generator...")
-        cfg = Config(
-            max_layers=max_layers,
-            layer_height=layer_height,
-            num_init_rounds=num_init_rounds,
-            num_init_cluster_layers=(
-                num_init_cluster_layers if num_init_cluster_layers != -1 else max_layers
-            ),
-            random_seed=random_seed,
-            background_color=(
-                ctx.obj["config"].get("background_color", "#000000")
-                if isinstance(ctx.obj["config"], dict)
-                else getattr(ctx.obj["config"], "background_color", "#000000")
-            ),
-        )
-
-        heightmap_generator = HeightMapGenerator(cfg, device)
-
-        # Convert TARGET image tensor to numpy array for heightmap generation
-        target_image_np = target_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
-        target_image_np = (target_image_np * 255).astype(np.uint8)
-
-        background_tuple = hex_to_rgb(cfg.background_color)
-        material_colors_np = selected_colors.cpu().numpy()
 
         # Generate heightmap at FULL TARGET resolution
         click.echo("Generating heightmap at target resolution...")
-        target_height_logits_np, target_global_logits_np, target_labels_np = (
-            heightmap_generator.generate(
-                target_image_np, background_tuple, material_colors_np
-            )
-        )
-
-        # Convert to tensors with correct dtype
-        target_height_logits = torch.from_numpy(target_height_logits_np).float()
-        target_global_logits = torch.from_numpy(target_global_logits_np).float()
-
-        # Downscale heightmap to processing resolution using nearest neighbor
         click.echo("Downscaling heightmap for optimization...")
-        processing_height_logits_np = cv2.resize(
-            src=target_height_logits_np,
-            interpolation=cv2.INTER_NEAREST,
-            dsize=(processing_w, processing_h),
+        prepared_heightmap = _prepare_heightmap(
+            ctx=ctx,
+            target_image=target_image,
+            selected_colors=selected_colors,
+            max_layers=max_layers,
+            layer_height=layer_height,
+            num_init_rounds=num_init_rounds,
+            num_init_cluster_layers=num_init_cluster_layers,
+            random_seed=random_seed,
+            processing_w=processing_w,
+            processing_h=processing_h,
+            device=device,
         )
-        processing_height_logits = torch.from_numpy(processing_height_logits_np).float()
+        target_image_np = prepared_heightmap.target_image_np
+        target_height_logits = prepared_heightmap.target_height_logits
+        target_global_logits = prepared_heightmap.target_global_logits
+        processing_height_logits = prepared_heightmap.processing_height_logits
 
         # Setup optimization at PROCESSING resolution
         click.echo("Setting up optimization...")

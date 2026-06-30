@@ -432,6 +432,241 @@ class TestCLIConfigDefaults:
         assert result.exit_code == 0
         assert result.output.strip() == "7"
 
+    def test_parse_export_format_list_rejects_unknown_format(self):
+        """Export format parsing should keep the existing Click error behavior."""
+        import click
+
+        from bananaforge.cli import _parse_export_format_list
+
+        assert _parse_export_format_list("stl,3mf,instructions") == [
+            "stl",
+            "3mf",
+            "instructions",
+        ]
+        with pytest.raises(click.ClickException):
+            _parse_export_format_list("stl,unknown")
+
+    def test_resolve_convert_options_applies_config_and_ordered_layers(self):
+        """Convert option resolution should handle config and ordered layers."""
+        import logging
+
+        import click
+        from click.testing import CliRunner
+
+        from bananaforge.cli import _resolve_convert_options
+        from bananaforge.utils.config import ConfigManager
+
+        @click.command()
+        @click.option("--max-materials", type=int, default=4)
+        @click.option("--device", default="cpu")
+        @click.pass_context
+        def command(ctx, max_materials, device):
+            config_manager = ConfigManager()
+            config_manager.set("materials.max_materials", 7)
+            ctx.obj = {"config_manager": config_manager}
+
+            options = _resolve_convert_options(
+                ctx,
+                logging.getLogger(__name__),
+                output="./output",
+                max_materials=max_materials,
+                max_layers=15,
+                layer_height=0.08,
+                initial_layer_height=0.16,
+                nozzle_diameter=0.4,
+                physical_size=180.0,
+                max_triangles=None,
+                bottom_mode="simplified",
+                iterations=6000,
+                learning_rate=0.01,
+                device=device,
+                export_format="stl,instructions",
+                project_name="bananaforge_model",
+                resolution=512,
+                preview=False,
+                random_seed=0,
+                enable_transparency=True,
+                opacity_levels="0.33,0.67,1.0",
+                ordered_color_layers=True,
+                color_layer_order="#000000,#FFFFFF",
+                color_layer_count=2,
+                optimize_base_layers=False,
+                enable_gradients=False,
+                transparency_threshold=0.3,
+                mixed_precision=False,
+                bambu_compatible=True,
+                include_3mf_metadata=True,
+            )
+            click.echo(
+                "|".join(
+                    [
+                        str(options["max_materials"]),
+                        options["device"],
+                        str(options["enable_transparency"]),
+                        str(options["parsed_color_layer_order"]),
+                        ",".join(options["export_format_list"]),
+                    ]
+                )
+            )
+
+        result = CliRunner().invoke(command, [])
+
+        assert result.exit_code == 0
+        assert result.output.strip().splitlines()[-1] == (
+            "7|cpu|False|[(0, 0, 0), (255, 255, 255)]|stl,instructions,3mf"
+        )
+
+    def test_calculate_image_dimensions_preserves_landscape_aspect_ratio(self):
+        """Landscape images should scale longest side to target resolution."""
+        from bananaforge.cli import _calculate_image_dimensions
+
+        dimensions = _calculate_image_dimensions(
+            orig_w=1200,
+            orig_h=600,
+            physical_size=180.0,
+            nozzle_diameter=0.4,
+        )
+
+        assert dimensions["target_stl_resolution"] == 900
+        assert dimensions["processing_reduction_factor"] == 2
+        assert dimensions["computed_processing_size"] == 450
+        assert dimensions["target_w"] == 900
+        assert dimensions["target_h"] == 450
+        assert dimensions["processing_w"] == 450
+        assert dimensions["processing_h"] == 225
+
+    def test_calculate_image_dimensions_preserves_portrait_aspect_ratio(self):
+        """Portrait images should scale longest side to target resolution."""
+        from bananaforge.cli import _calculate_image_dimensions
+
+        dimensions = _calculate_image_dimensions(
+            orig_w=600,
+            orig_h=1200,
+            physical_size=180.0,
+            nozzle_diameter=0.4,
+        )
+
+        assert dimensions["target_w"] == 450
+        assert dimensions["target_h"] == 900
+        assert dimensions["processing_w"] == 225
+        assert dimensions["processing_h"] == 450
+
+    def test_calculate_image_dimensions_uses_large_resolution_reduction(self):
+        """Large target resolutions should use stronger processing reduction."""
+        from bananaforge.cli import _calculate_image_dimensions
+
+        dimensions = _calculate_image_dimensions(
+            orig_w=1000,
+            orig_h=1000,
+            physical_size=401.0,
+            nozzle_diameter=0.4,
+        )
+
+        assert dimensions["target_stl_resolution"] == 2005
+        assert dimensions["processing_reduction_factor"] == 4
+        assert dimensions["computed_processing_size"] == 501
+
+    def test_load_material_database_uses_default_when_no_file(self):
+        """No material file should use the default Bambu material set."""
+        from bananaforge.cli import _load_material_database
+
+        material_db = _load_material_database(None)
+
+        assert len(material_db) > 0
+
+    def test_load_material_database_rejects_unknown_extension(self, tmp_path):
+        """Only CSV and JSON material files are supported by convert."""
+        import click
+
+        from bananaforge.cli import _load_material_database
+
+        material_path = tmp_path / "materials.txt"
+        material_path.write_text("not,a,material,database")
+
+        with pytest.raises(click.ClickException):
+            _load_material_database(str(material_path))
+
+    def test_load_material_database_from_csv(self, tmp_path):
+        """CSV material files should load through the CLI helper."""
+        from bananaforge.cli import _load_material_database
+
+        material_path = tmp_path / "materials.csv"
+        material_path.write_text(
+            "\n".join(
+                [
+                    "id,name,brand,color_hex,transparency,td,density,temperature,cost",
+                    "black,Black,Test,#000000,0.0,4.0,1.25,200,25.0",
+                ]
+            )
+        )
+
+        material_db = _load_material_database(str(material_path))
+
+        assert len(material_db) == 1
+        assert material_db.get_material("black").color_hex == "#000000"
+
+    def test_prepare_heightmap_uses_config_background_and_downscales(
+        self, monkeypatch
+    ):
+        """Heightmap preparation should adapt tensors and resize for processing."""
+        from types import SimpleNamespace
+
+        import numpy as np
+        import torch
+
+        import bananaforge.cli as cli_module
+
+        captured = {}
+
+        class FakeHeightMapGenerator:
+            def __init__(self, config, device):
+                captured["config"] = config
+                captured["device"] = device
+
+            def generate(self, image, background_tuple, material_colors_np):
+                captured["image_shape"] = image.shape
+                captured["background_tuple"] = background_tuple
+                captured["material_colors"] = material_colors_np
+                return (
+                    np.arange(6, dtype=np.float32).reshape(2, 3),
+                    np.ones((4, 2), dtype=np.float32),
+                    np.zeros((2, 3), dtype=np.int64),
+                )
+
+        monkeypatch.setattr(
+            cli_module,
+            "HeightMapGenerator",
+            FakeHeightMapGenerator,
+        )
+
+        ctx = SimpleNamespace(obj={"config": {"background_color": "#010203"}})
+        target_image = torch.zeros(1, 3, 2, 3)
+        selected_colors = torch.tensor([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+
+        prepared = cli_module._prepare_heightmap(
+            ctx=ctx,
+            target_image=target_image,
+            selected_colors=selected_colors,
+            max_layers=4,
+            layer_height=0.08,
+            num_init_rounds=1,
+            num_init_cluster_layers=-1,
+            random_seed=123,
+            processing_w=2,
+            processing_h=1,
+            device="cpu",
+        )
+
+        assert captured["device"] == "cpu"
+        assert captured["config"].num_init_cluster_layers == 4
+        assert captured["image_shape"] == (2, 3, 3)
+        assert captured["background_tuple"] == (1, 2, 3)
+        assert captured["material_colors"].shape == (2, 3)
+        assert prepared.target_image_np.shape == (2, 3, 3)
+        assert prepared.target_height_logits.shape == (2, 3)
+        assert prepared.target_global_logits.shape == (4, 2)
+        assert prepared.processing_height_logits.shape == (1, 2)
+
     def test_environment_overrides_apply_to_config_manager(self, monkeypatch):
         """Documented environment variables should populate config defaults."""
         from bananaforge.utils.config import ConfigManager
