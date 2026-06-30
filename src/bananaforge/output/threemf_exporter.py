@@ -25,6 +25,7 @@ import torch
 
 from ..materials.database import MaterialDatabase
 from ..utils.logging import get_logger
+from .bambu_gcode import BambuGCodeGenerator
 from .bambu_thumbnails import BambuThumbnailWriter
 from .export_types import LayerMaterial as LayerMaterial
 from .export_types import ThreeMFExportConfig as ThreeMFExportConfig
@@ -87,6 +88,7 @@ class BambuProductionExporter:
         self.component_object_uuid = "00010000-b206-40ff-9872-83e8017abed1"
         self.build_uuid = "2c7c17d8-22b5-4d84-8835-1976022ea369"
         self.item_uuid = "00000002-b1ec-4553-aec9-835e5b724bb4"
+        self.gcode_generator = BambuGCodeGenerator(material_db)
         self.thumbnail_writer = BambuThumbnailWriter()
 
     def create_3mf_container(
@@ -1270,130 +1272,7 @@ class BambuProductionExporter:
 
     def _generate_custom_gcode(self, material_data: Dict[str, Any]) -> str:
         """Generate custom_gcode_per_layer.xml with material swap instructions."""
-        layer_materials = material_data.get("layer_materials", {})
-
-        if not layer_materials:
-            return """<?xml version="1.0" encoding="utf-8"?>
-<custom_gcodes_per_layer>
-<plate>
-<plate_info id="1"/>
-<mode value="MultiAsSingle"/>
-</plate>
-</custom_gcodes_per_layer>
-"""
-
-        # Build layer swap instructions
-        gcode_layers = []
-
-        # Get unique materials in order they appear
-        unique_materials = []
-        sorted_layers = sorted(layer_materials.items(), key=lambda x: x[0])
-
-        for _, layer_material in sorted_layers:
-            if isinstance(layer_material, LayerMaterial):
-                material_id = layer_material.material_id
-            else:
-                material_id = layer_material.get("material_id", "unknown")
-
-            if material_id not in unique_materials:
-                unique_materials.append(material_id)
-
-        # Create material to extruder mapping (1-indexed)
-        material_to_extruder = {
-            mat_id: idx + 1 for idx, mat_id in enumerate(unique_materials)
-        }
-
-        prev_material = None
-        for layer_idx, layer_material in sorted_layers:
-            if isinstance(layer_material, LayerMaterial):
-                material_id = layer_material.material_id
-                layer_height = layer_material.layer_height
-            else:
-                material_id = layer_material.get("material_id", f"material_{layer_idx}")
-                layer_height = layer_material.get("layer_height", 0.08)
-
-            # Calculate Z height matching SwapInstructionGenerator logic
-            # Layer 0 = initial_layer_height, Layer 1+ = initial_layer_height + (layer_idx * layer_height)
-            initial_layer_height = 0.16  # From instructions
-
-            # Check if material changed
-            if prev_material and material_id != prev_material:
-                # Find material color and extruder mapping
-                material_color = self._get_material_color(material_id)
-                extruder_id = material_to_extruder.get(material_id, 1)
-
-                # Bambu Studio expects the swap command one layer earlier than where the new material appears
-                # So if layer_idx should have new material, we put the swap at the end of layer_idx-1
-                if layer_idx == 0:
-                    # Can't swap before layer 0, skip this case
-                    continue
-
-                swap_layer_idx = layer_idx - 1
-                if swap_layer_idx == 0:
-                    swap_z = initial_layer_height  # End of first layer
-                else:
-                    swap_z = initial_layer_height + (swap_layer_idx * layer_height)
-
-                logger.info(
-                    f"Layer swap at z={swap_z:.3f}: {prev_material} -> {material_id} (extruder {extruder_id}, color {material_color}) - for layer {layer_idx + 1}"
-                )
-
-                gcode_layers.append(
-                    f'<layer top_z="{swap_z:.6f}" type="2" extruder="{extruder_id}" color="{material_color}" extra="" gcode="tool_change"/>'
-                )
-
-            prev_material = material_id
-
-        # Generate XML
-        layers_xml = "\n".join(gcode_layers)
-
-        return f"""<?xml version="1.0" encoding="utf-8"?>
-<custom_gcodes_per_layer>
-<plate>
-<plate_info id="1"/>
-{layers_xml}
-<mode value="MultiAsSingle"/>
-</plate>
-</custom_gcodes_per_layer>
-"""
-
-    def _get_material_color(self, material_id: str) -> str:
-        """Get hex color for a material ID from material database."""
-        try:
-            material = self.material_db.get_material(material_id)
-            if material and hasattr(material, "color_hex"):
-                return material.color_hex
-        except Exception:
-            pass
-
-        # Fallback colors based on material name
-        color_mapping = {
-            "bambu_pla_gray": "#808080",
-            "bambu_pla_light_blue": "#ADD8E6",
-            "bambu_pla_white": "#FFFFFF",
-            "bambu_pla_black": "#000000",
-            "bambu_pla_pink": "#FFC0CB",
-        }
-        return color_mapping.get(material_id, "#FFFFFF")
-
-    def _get_extruder_for_material(
-        self, material_id: str, sorted_layers: List[Tuple[int, Any]]
-    ) -> int:
-        """Map material to extruder number (1-indexed)."""
-        unique_materials = []
-        for _, layer_material in sorted_layers:
-            if isinstance(layer_material, LayerMaterial):
-                mat_id = layer_material.material_id
-            else:
-                mat_id = layer_material.get("material_id", "unknown")
-
-            if mat_id not in unique_materials:
-                unique_materials.append(mat_id)
-
-        try:
-            return unique_materials.index(material_id) + 1  # 1-indexed
-        except ValueError:
-            return 1  # Default to extruder 1
+        return self.gcode_generator.generate_custom_gcode(material_data)
 
     def _add_proper_thumbnails(
         self, zip_file: zipfile.ZipFile, optimization_results: Dict[str, Any]
