@@ -25,6 +25,7 @@ import torch
 
 from ..materials.database import MaterialDatabase
 from ..utils.logging import get_logger
+from .bambu_thumbnails import BambuThumbnailWriter
 from .export_types import LayerMaterial as LayerMaterial
 from .export_types import ThreeMFExportConfig as ThreeMFExportConfig
 from .model_xml import ModelXMLGenerator as ModelXMLGenerator
@@ -86,6 +87,7 @@ class BambuProductionExporter:
         self.component_object_uuid = "00010000-b206-40ff-9872-83e8017abed1"
         self.build_uuid = "2c7c17d8-22b5-4d84-8835-1976022ea369"
         self.item_uuid = "00000002-b1ec-4553-aec9-835e5b724bb4"
+        self.thumbnail_writer = BambuThumbnailWriter()
 
     def create_3mf_container(
         self,
@@ -1397,105 +1399,7 @@ class BambuProductionExporter:
         self, zip_file: zipfile.ZipFile, optimization_results: Dict[str, Any]
     ) -> None:
         """Generate proper 512x512 PNG thumbnails for Bambu Studio."""
-        try:
-            import os
-
-            from PIL import Image
-
-            # Try to get the original image for preview generation
-            source_image_path = optimization_results.get("source_image_path")
-            if source_image_path and os.path.exists(source_image_path):
-                # Load and resize the original image for preview
-                with Image.open(source_image_path) as img:
-                    img = img.convert("RGBA")
-                    img = img.resize((512, 512), Image.Resampling.LANCZOS)
-
-                    # Create different views
-                    self._add_image_thumbnail(zip_file, "Metadata/pick_1.png", img)
-                    self._add_image_thumbnail(zip_file, "Metadata/plate_1.png", img)
-
-                    # Create smaller version for plate_1_small.png
-                    small_img = img.resize((256, 256), Image.Resampling.LANCZOS)
-                    small_img = small_img.resize(
-                        (512, 512), Image.Resampling.NEAREST
-                    )  # Upscale with pixelation
-                    self._add_image_thumbnail(
-                        zip_file, "Metadata/plate_1_small.png", small_img
-                    )
-
-                    # Create versions with different lighting/effects
-                    dark_img = Image.new("RGBA", (512, 512), (40, 40, 40, 255))
-                    dark_img.paste(img, (0, 0), img)
-                    self._add_image_thumbnail(
-                        zip_file, "Metadata/plate_no_light_1.png", dark_img
-                    )
-                    self._add_image_thumbnail(zip_file, "Metadata/top_1.png", img)
-
-                    return
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.warning(f"Could not generate proper thumbnails: {e}")
-
-        # Fallback to placeholders if image generation fails
-        self._add_placeholder_thumbnails(zip_file)
-
-    def _add_image_thumbnail(
-        self, zip_file: zipfile.ZipFile, path: str, image: Any
-    ) -> None:
-        """Add a PIL image as a thumbnail to the ZIP file."""
-        import io
-
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
-        zip_file.writestr(path, buffer.getvalue())
-
-    def _add_placeholder_thumbnails(self, zip_file: zipfile.ZipFile) -> None:
-        """Add proper sized placeholder PNG thumbnails (512x512)."""
-        try:
-            import io
-
-            from PIL import Image
-
-            # Create a 512x512 gray placeholder image
-            placeholder = Image.new("RGBA", (512, 512), (128, 128, 128, 255))
-
-            # Add a simple grid pattern to make it recognizable
-            from PIL import ImageDraw
-
-            draw = ImageDraw.Draw(placeholder)
-            for i in range(0, 512, 64):
-                draw.line([(i, 0), (i, 512)], fill=(100, 100, 100, 255), width=1)
-                draw.line([(0, i), (512, i)], fill=(100, 100, 100, 255), width=1)
-
-            # Add text
-            try:
-                draw.text(
-                    (256, 256), "BananaForge", fill=(255, 255, 255, 255), anchor="mm"
-                )
-            except Exception:
-                pass  # Skip text if font not available
-
-            # Save to buffer and add to all thumbnail locations
-            buffer = io.BytesIO()
-            placeholder.save(buffer, format="PNG", optimize=True)
-            png_data = buffer.getvalue()
-
-            zip_file.writestr("Metadata/plate_1.png", png_data)
-            zip_file.writestr("Metadata/plate_1_small.png", png_data)
-            zip_file.writestr("Metadata/plate_no_light_1.png", png_data)
-            zip_file.writestr("Metadata/top_1.png", png_data)
-            zip_file.writestr("Metadata/pick_1.png", png_data)
-
-        except ImportError:
-            # Ultimate fallback: minimal 1x1 PNG if PIL not available
-            png_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\tpHYs\x00\x00\x0b\x13\x00\x00\x0b\x13\x01\x00\x9a\x9c\x18\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x00\x01\x00\x18\xdd\x8d\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
-
-            zip_file.writestr("Metadata/plate_1.png", png_data)
-            zip_file.writestr("Metadata/plate_1_small.png", png_data)
-            zip_file.writestr("Metadata/plate_no_light_1.png", png_data)
-            zip_file.writestr("Metadata/top_1.png", png_data)
-            zip_file.writestr("Metadata/pick_1.png", png_data)
+        self.thumbnail_writer.add_proper_thumbnails(zip_file, optimization_results)
 
 
 class ThreeMFExporter:
