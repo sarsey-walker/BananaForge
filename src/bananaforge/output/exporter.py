@@ -23,7 +23,7 @@ class ModelExporter:
         layer_height: float = 0.08,
         initial_layer_height: float = 0.16,
         nozzle_diameter: float = 0.4,
-        base_height: float = 0.24,
+        base_height: float = 0.0,
         physical_size: float = 100.0,
         material_db: Optional[MaterialDatabase] = None,
         device: str = "cpu",
@@ -35,7 +35,7 @@ class ModelExporter:
             layer_height: Layer height in mm (default: 0.08mm)
             initial_layer_height: Initial layer height in mm (default: 0.16mm)
             nozzle_diameter: Nozzle diameter in mm (default: 0.4mm)
-            base_height: Base height in mm
+            base_height: Deprecated extra Z offset in mm; kept for compatibility
             physical_size: Physical size of model in mm
             material_db: Material database for 3MF export
             device: Device for computations

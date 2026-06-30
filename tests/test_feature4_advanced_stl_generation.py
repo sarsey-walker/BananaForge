@@ -113,6 +113,29 @@ class TestStory41AlphaChannelSupport:
             assert quality_metrics["vertex_count"] > 0, "Should have vertices"
             assert quality_metrics["face_count"] > 0, "Should have faces"
 
+    def test_alpha_stl_height_uses_initial_layer_without_extra_base_offset(
+        self, stl_generator
+    ):
+        """Alpha STL Z bounds should use the same layer-height convention."""
+        height_map = torch.ones(1, 1, 4, 4) * 5
+        alpha_mask = torch.ones(4, 4, dtype=torch.bool)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "alpha_height_test.stl"
+
+            mesh = stl_generator.generate_stl_with_alpha(
+                height_map=height_map,
+                alpha_mask=alpha_mask,
+                output_path=output_path,
+                physical_size=20.0,
+                smooth_mesh=False,
+                create_boundaries=False,
+                ensure_manifold=False,
+            )
+
+            assert mesh.bounds[0][2] == pytest.approx(0.0)
+            assert mesh.bounds[1][2] == pytest.approx(0.56)
+
     def test_creates_proper_boundaries_around_transparent_regions(
         self, stl_generator, test_alpha_image_data
     ):

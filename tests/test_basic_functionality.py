@@ -168,6 +168,33 @@ class TestBasicFunctionality:
                 if Path(tmp_file.name).exists():
                     os.unlink(tmp_file.name)
 
+    def test_stl_height_uses_initial_layer_without_extra_base_offset(self):
+        """STL Z bounds should match layer units plus the initial layer only."""
+        from bananaforge.output.stl_generator import STLGenerator
+
+        height_map = torch.ones(1, 1, 4, 4) * 5
+        generator = STLGenerator(
+            layer_height=0.08,
+            initial_layer_height=0.16,
+            base_height=0.24,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp_file:
+            try:
+                mesh = generator.generate_stl(
+                    height_map=height_map,
+                    output_path=tmp_file.name,
+                    physical_size=20.0,
+                    smooth_mesh=False,
+                )
+
+                assert mesh.bounds[0][2] == pytest.approx(0.0)
+                assert mesh.bounds[1][2] == pytest.approx(0.56)
+
+            finally:
+                if Path(tmp_file.name).exists():
+                    os.unlink(tmp_file.name)
+
     def test_flat_stl_uses_greedy_mesh_reduction(self):
         """Flat height maps should merge large coplanar regions."""
         from bananaforge.output.exporter import ModelExporter

@@ -19,7 +19,7 @@ class STLGenerator:
         layer_height: float = 0.08,
         initial_layer_height: float = 0.16,
         nozzle_diameter: float = 0.4,
-        base_height: float = 0.24,
+        base_height: float = 0.0,
         bottom_mode: str = "simplified",
     ):
         """Initialize STL generator.
@@ -28,7 +28,7 @@ class STLGenerator:
             layer_height: Height of each layer in mm (default: 0.08mm)
             initial_layer_height: Height of first layer in mm (default: 0.16mm)
             nozzle_diameter: Nozzle diameter in mm (default: 0.4mm)
-            base_height: Background height in mm
+            base_height: Deprecated extra Z offset in mm; kept for compatibility
             bottom_mode: Bottom face generation mode: full, simplified, or none
         """
         self.layer_height = layer_height
@@ -75,9 +75,8 @@ class STLGenerator:
         physical_width = w * scale_factor
         physical_height = h * scale_factor
 
-        # Convert layer units to physical height
-        # height_map * layer_height + background_height
-        # Use initial_layer_height as background_height
+        # Convert layer units to physical height. The initial layer is the
+        # printable base thickness; do not add another base offset later.
         physical_height_map = (
             height_array * self.layer_height + self.initial_layer_height
         )
@@ -131,7 +130,7 @@ class STLGenerator:
         j, i = np.meshgrid(np.arange(W), np.arange(H))
         x = j.astype(np.float32)
         y = (H - 1 - i).astype(np.float32)
-        z = height_map.astype(np.float32) + self.base_height
+        z = height_map.astype(np.float32)
 
         top_vertices = np.stack([x, y, z], axis=2)
         bottom_vertices = top_vertices.copy()
@@ -582,7 +581,9 @@ class STLGenerator:
 
         # Get vertex heights in layer units
         vertex_heights_mm = mesh.vertices[:, 2]
-        vertex_layers = (vertex_heights_mm - self.base_height) / self.layer_height
+        vertex_layers = (
+            vertex_heights_mm - self.initial_layer_height
+        ) / self.layer_height
         vertex_layers = np.round(vertex_layers).astype(int)
         vertex_layers = np.clip(vertex_layers, 0, num_layers - 1)
 
@@ -670,7 +671,8 @@ class STLGenerator:
         physical_width = w * scale_factor
         physical_height = h * scale_factor
 
-        # Convert layer units to physical height
+        # Convert layer units to physical height. The initial layer is the
+        # printable base thickness; do not add another base offset later.
         physical_height_map = (
             height_array * self.layer_height + self.initial_layer_height
         )
