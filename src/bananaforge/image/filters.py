@@ -5,9 +5,7 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from scipy import ndimage
 
 
 class EdgeDetector:
@@ -422,11 +420,11 @@ class ColorAnalyzer:
         r, g, b = rgb[:, 0:1], rgb[:, 1:2], rgb[:, 2:3]
 
         # Approximate L*a*b* conversion
-        l = 0.299 * r + 0.587 * g + 0.114 * b
+        lightness = 0.299 * r + 0.587 * g + 0.114 * b
         a = 0.5 + 0.5 * (r - g)
         b_comp = 0.5 + 0.25 * (g + r - 2 * b)
 
-        return torch.cat([l, a, b_comp], dim=1)
+        return torch.cat([lightness, a, b_comp], dim=1)
 
     def _lab_to_rgb(self, lab: torch.Tensor) -> torch.Tensor:
         """Convert LAB to RGB color space (simplified)."""

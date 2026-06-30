@@ -1,6 +1,5 @@
 """Material database management for BananaForge."""
 
-import csv
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -374,11 +373,11 @@ class MaterialDatabase:
         r, g, b = rgb[0], rgb[1], rgb[2]
 
         # Simplified RGB to LAB conversion
-        l = 0.299 * r + 0.587 * g + 0.114 * b
+        lightness = 0.299 * r + 0.587 * g + 0.114 * b
         a = 0.5 * (r - g)
         b_comp = 0.5 * (g + r - 2 * b)
 
-        return torch.tensor([l, a, b_comp])
+        return torch.tensor([lightness, a, b_comp])
 
     def _invalidate_cache(self) -> None:
         """Invalidate color and ID caches."""
@@ -387,7 +386,7 @@ class MaterialDatabase:
 
     def get_all_materials(self) -> List[Material]:
         """Get all materials in the database.
-        
+
         Returns:
             List of all materials
         """

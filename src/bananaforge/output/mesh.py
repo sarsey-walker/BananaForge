@@ -1,12 +1,10 @@
 """Advanced mesh processing utilities."""
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional
 
 import cv2
 import numpy as np
-import torch
 import trimesh
-from scipy import ndimage
 
 
 class MeshProcessor:
@@ -127,8 +125,6 @@ class MeshProcessor:
     ) -> trimesh.Trimesh:
         """Create a cylindrical support pillar."""
         height = top_point[2]
-        bottom_point = np.array([top_point[0], top_point[1], 0])
-
         # Create cylinder
         cylinder = trimesh.creation.cylinder(radius=radius, height=height, sections=8)
 
@@ -267,7 +263,7 @@ class MeshProcessor:
             degenerate_count = np.sum(face_areas < 1e-10)
             analysis["has_degenerate_faces"] = degenerate_count > 0
             analysis["degenerate_face_count"] = int(degenerate_count)
-        except:
+        except Exception:
             analysis["degenerate_face_count"] = -1
 
         # Check for overhangs

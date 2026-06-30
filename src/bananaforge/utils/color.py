@@ -1,10 +1,8 @@
 """Color space conversion utilities for BananaForge."""
 
-from typing import Optional, Tuple
+from typing import Tuple
 
-import numpy as np
 import torch
-import torch.nn.functional as F
 
 
 def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
@@ -298,22 +296,22 @@ def get_color_converter(device: str = "cpu") -> ColorConverter:
 
 def rgb_to_lab(rgb: torch.Tensor) -> torch.Tensor:
     """Convert RGB tensor to LAB color space.
-    
+
     Args:
         rgb: RGB tensor with values in [0, 1] or [0, 255]
-        
+
     Returns:
         LAB tensor with L* in [0, 100], a* and b* in [-128, 127]
     """
     converter = get_color_converter(device=str(rgb.device))
-    
+
     # Handle different input formats
     if rgb.max() <= 1.0:
         # Input is in [0, 1], scale to [0, 255]
         rgb_scaled = rgb * 255.0
     else:
         rgb_scaled = rgb
-    
+
     # Ensure correct tensor shape for converter
     if rgb.dim() == 1:
         # Single color vector (3,) -> (1, 3, 1, 1)
@@ -332,15 +330,15 @@ def rgb_to_lab(rgb: torch.Tensor) -> torch.Tensor:
 
 def lab_to_rgb(lab: torch.Tensor) -> torch.Tensor:
     """Convert LAB tensor to RGB color space.
-    
+
     Args:
         lab: LAB tensor with L* in [0, 100], a* and b* in [-128, 127]
-        
+
     Returns:
         RGB tensor with values in [0, 1]
     """
     converter = get_color_converter(device=str(lab.device))
-    
+
     # Handle different input formats
     if lab.dim() == 1:
         # Single color vector (3,) -> (1, 3, 1, 1)
@@ -355,7 +353,7 @@ def lab_to_rgb(lab: torch.Tensor) -> torch.Tensor:
     else:
         # Image tensor, use directly
         rgb_result = converter.lab_to_rgb(lab)
-    
+
     # Convert from [0, 255] to [0, 1]
     return rgb_result / 255.0
 

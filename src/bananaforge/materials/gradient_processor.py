@@ -4,14 +4,12 @@ This module implements gradient detection and processing for creating realistic
 shading and gradient effects using transparency mixing.
 """
 
-from typing import Dict, List, Optional, Tuple, Union
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
 from dataclasses import dataclass
+from typing import Dict, List, Tuple
 
-from ..utils.color import rgb_to_lab, lab_to_rgb
+import numpy as np
+import torch
+import torch.nn.functional as F
 
 
 @dataclass
@@ -1099,7 +1097,7 @@ class GradientProcessor:
                 }
                 processed_regions.append(processed_region)
 
-        except Exception as e:
+        except Exception:
             success = False
 
         return {

@@ -1,12 +1,11 @@
 """Visualization utilities for BananaForge."""
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
 from matplotlib.colors import ListedColormap
 
@@ -247,8 +246,6 @@ class Visualizer:
 
     def _plot_height_map_3d(self, ax: plt.Axes, height_map: np.ndarray) -> None:
         """Create 3D visualization of height map."""
-        from mpl_toolkits.mplot3d import Axes3D
-
         # Remove old axes and create 3D axes
         fig = ax.figure
         ax.remove()
@@ -266,7 +263,7 @@ class Visualizer:
             Y = Y[::step, ::step]
             height_map = height_map[::step, ::step]
 
-        surf = ax.plot_surface(
+        ax.plot_surface(
             X, Y, height_map, cmap="viridis", alpha=0.8, antialiased=True
         )
 

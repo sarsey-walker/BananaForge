@@ -4,13 +4,12 @@ This module implements the transparency color mixing system that enables creatin
 more colors with fewer materials through strategic layer transparency mixing.
 """
 
-from typing import Dict, List, Optional, Tuple, Union
-import torch
-import torch.nn as nn
-import numpy as np
 from dataclasses import dataclass
+from typing import Dict, List, Optional
 
-from ..utils.color import rgb_to_lab, lab_to_rgb
+import torch
+
+from ..utils.color import rgb_to_lab
 
 
 @dataclass
@@ -454,7 +453,6 @@ class TransparencyColorMixer:
 
         # Add detailed accuracy metrics to each combination
         for combo in combinations:
-            base_color = filament_colors[combo["base_material"]]
             overlay_color = filament_colors[combo["overlay_material"]]
             achieved_color = combo["color"]
 
@@ -581,7 +579,9 @@ class TransparencyColorMixer:
         max_diff = max(rg_diff, rb_diff, gb_diff)
         return max_diff < threshold
 
-    def _filter_grayscale_colors(self, colors: List[torch.Tensor], threshold: float = 0.1) -> List[torch.Tensor]:
+    def _filter_grayscale_colors(
+        self, colors: List[torch.Tensor], threshold: float = 0.1
+    ) -> List[torch.Tensor]:
         """Filter color list to include only grayscale colors.
 
         Args:
@@ -592,12 +592,12 @@ class TransparencyColorMixer:
             List of grayscale color tensors
         """
         grayscale_colors = []
-        
+
         for color in colors:
             # Check if color is grayscale (R≈G≈B)
             r, g, b = color[0].item(), color[1].item(), color[2].item()
-            color_diff = max(abs(r-g), abs(r-b), abs(g-b))
-            
+            color_diff = max(abs(r - g), abs(r - b), abs(g - b))
+
             # Consider it grayscale if color channels are very similar
             if color_diff < threshold:
                 grayscale_colors.append(color)
@@ -605,9 +605,7 @@ class TransparencyColorMixer:
         return grayscale_colors
 
     def compute_grayscale_mixing_options(
-        self, 
-        grayscale_colors: List[torch.Tensor], 
-        max_layers: int = 3
+        self, grayscale_colors: List[torch.Tensor], max_layers: int = 3
     ) -> Dict:
         """Compute grayscale-specific mixing options.
 
@@ -620,26 +618,32 @@ class TransparencyColorMixer:
         """
         # Sort grayscale colors by luminance
         sorted_colors = sorted(
-            grayscale_colors, 
-            key=lambda c: (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]).item()
+            grayscale_colors,
+            key=lambda c: (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]).item(),
         )
 
         mixing_options = []
-        
+
         # Generate all possible grayscale combinations
         for i, dark_color in enumerate(sorted_colors):
-            for j, light_color in enumerate(sorted_colors[i+1:], i+1):
+            for j, light_color in enumerate(sorted_colors[i + 1 :], i + 1):
                 for opacity in self.opacity_levels:
                     mixed_color = dark_color * (1 - opacity) + light_color * opacity
                     mixed_color = torch.clamp(mixed_color, 0.0, 1.0)
-                    
-                    mixing_options.append({
-                        "dark_base_index": i,
-                        "light_overlay_index": j,
-                        "mixed_color": mixed_color,
-                        "opacity": opacity,
-                        "luminance": (0.299 * mixed_color[0] + 0.587 * mixed_color[1] + 0.114 * mixed_color[2]).item()
-                    })
+
+                    mixing_options.append(
+                        {
+                            "dark_base_index": i,
+                            "light_overlay_index": j,
+                            "mixed_color": mixed_color,
+                            "opacity": opacity,
+                            "luminance": (
+                                0.299 * mixed_color[0]
+                                + 0.587 * mixed_color[1]
+                                + 0.114 * mixed_color[2]
+                            ).item(),
+                        }
+                    )
 
         # Sort by luminance for smooth gradients
         mixing_options.sort(key=lambda x: x["luminance"])
@@ -650,6 +654,6 @@ class TransparencyColorMixer:
             "total_grayscale_combinations": len(mixing_options),
             "luminance_range": {
                 "min": mixing_options[0]["luminance"] if mixing_options else 0.0,
-                "max": mixing_options[-1]["luminance"] if mixing_options else 1.0
-            }
+                "max": mixing_options[-1]["luminance"] if mixing_options else 1.0,
+            },
         }

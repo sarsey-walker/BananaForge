@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -116,12 +116,14 @@ class SwapInstructionGenerator:
                     # Can't swap before layer 0, skip this case
                     current_material = layer_material
                     continue
-                
+
                 swap_layer_idx = layer_idx - 1
                 if swap_layer_idx == 0:
                     height_mm = self.initial_layer_height  # End of first layer
                 else:
-                    height_mm = self.initial_layer_height + (swap_layer_idx * self.layer_height)
+                    height_mm = self.initial_layer_height + (
+                        swap_layer_idx * self.layer_height
+                    )
 
                 # Get material information
                 old_mat = material_database.get_material(current_material)
@@ -132,7 +134,8 @@ class SwapInstructionGenerator:
 
                 # Create instruction with the actual swap layer number (one earlier)
                 instruction = SwapInstruction(
-                    layer_number=swap_layer_idx + 1,  # +1 because layers are 1-indexed for user display
+                    layer_number=swap_layer_idx
+                    + 1,  # +1 because layers are 1-indexed for user display
                     height_mm=height_mm,
                     old_material=current_material,
                     new_material=layer_material,
@@ -229,7 +232,7 @@ class SwapInstructionGenerator:
             # Print setup configuration
             f.write("PRINT SETUP CONFIGURATION\n")
             f.write("=" * 30 + "\n")
-            
+
             if print_settings:
                 f.write(f"Layer Height: {print_settings.layer_height:.2f}mm\n")
                 f.write(f"Initial Layer Height: {self.initial_layer_height:.2f}mm\n")
@@ -248,7 +251,7 @@ class SwapInstructionGenerator:
                 f.write("Infill: 15%\n")
                 f.write("Supports: No\n")
                 f.write("Brim: No\n")
-            
+
             f.write("\n")
 
             # Starting material information
@@ -256,7 +259,7 @@ class SwapInstructionGenerator:
                 starting_material = instructions[0].old_material
                 f.write("STARTING MATERIAL\n")
                 f.write("=" * 20 + "\n")
-                
+
                 if material_database:
                     start_mat = material_database.get_material(starting_material)
                     if start_mat:
@@ -264,17 +267,21 @@ class SwapInstructionGenerator:
                         f.write(f"Color: {start_mat.color_hex} ({start_mat.name})\n")
                         f.write(f"Temperature: {start_mat.temperature}°C\n")
                         f.write(f"Brand: {start_mat.brand}\n")
-                        f.write(f"Load this material and begin printing.\n")
+                        f.write("Load this material and begin printing.\n")
                     else:
                         f.write(f"Material ID: {starting_material}\n")
                         f.write("Load this material and begin printing.\n")
                 else:
                     f.write(f"Material ID: {starting_material}\n")
                     f.write("Load this material and begin printing.\n")
-                
-                f.write(f"Print the base/background layer at {self.initial_layer_height:.2f}mm height.\n")
-                f.write(f"Continue with this material until Layer {instructions[0].layer_number}.\n\n")
-            
+
+                f.write(
+                    f"Print the base/background layer at {self.initial_layer_height:.2f}mm height.\n"
+                )
+                f.write(
+                    f"Continue with this material until Layer {instructions[0].layer_number}.\n\n"
+                )
+
             # Material swap instructions
             f.write("MATERIAL SWAP INSTRUCTIONS\n")
             f.write("=" * 35 + "\n\n")
@@ -290,7 +297,7 @@ class SwapInstructionGenerator:
                 f.write(f"Layer: {instruction.layer_number}\n")
                 f.write(f"Height: {instruction.height_mm:.2f}mm\n")
                 f.write(f"Action: {instruction.description}\n")
-                
+
                 # Add material-specific temperature information
                 if material_database:
                     new_mat = material_database.get_material(instruction.new_material)
@@ -310,18 +317,20 @@ class SwapInstructionGenerator:
             f.write("PRINTING SUMMARY\n")
             f.write("=" * 20 + "\n")
             f.write(f"Total material swaps: {len(instructions)}\n")
-            
+
             if include_timing:
                 total_minutes = total_time // 60
                 f.write(f"Total swap time: {total_minutes} minutes\n")
-            
+
             if print_settings and print_settings.estimated_print_time_minutes > 0:
                 total_print_hours = print_settings.estimated_print_time_minutes / 60.0
                 f.write(f"Estimated print time: {total_print_hours:.1f} hours\n")
-                f.write(f"Total project time: {total_print_hours + (total_time/3600):.1f} hours\n")
-            
+                f.write(
+                    f"Total project time: {total_print_hours + (total_time/3600):.1f} hours\n"
+                )
+
             f.write("\n")
-            
+
             # General printing tips
             f.write("PRINTING TIPS\n")
             f.write("=" * 15 + "\n")
@@ -410,7 +419,7 @@ class ProjectFileGenerator:
             "created": datetime.now().isoformat(),
             "project": {
                 "name": project_name,
-                "description": f"Generated by BananaForge from image optimization",
+                "description": "Generated by BananaForge from image optimization",
                 "dimensions": {
                     "width": height_array.shape[1],
                     "height": height_array.shape[0],

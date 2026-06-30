@@ -4,15 +4,14 @@ This module implements base layer color selection optimization to maximize
 contrast and color palette expansion through strategic transparency usage.
 """
 
-from typing import Dict, List, Optional, Tuple, Union
-import torch
-import torch.nn as nn
-import numpy as np
 from dataclasses import dataclass
-import concurrent.futures
 from threading import Lock
+from typing import Dict, List
 
-from ..utils.color import rgb_to_lab, lab_to_rgb
+import numpy as np
+import torch
+
+from ..utils.color import rgb_to_lab
 
 
 @dataclass

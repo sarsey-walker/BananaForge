@@ -6,7 +6,7 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import click
 import cv2
@@ -15,9 +15,6 @@ import rich.console
 import rich.traceback
 import torch
 from rich.console import Console
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.table import Table
 
 from .core.optimizer import LayerOptimizer, OptimizationConfig
 from .image.heightmap import HeightMapGenerator
@@ -512,7 +509,6 @@ def convert(
         if not skip_transparency_check or analyze_transparency:
             from .image.transparency_detector import TransparencyDetector
             from .image.transparency_notifier import (
-                TransparencyException,
                 TransparencyNotifier,
             )
             from .image.transparency_reporter import TransparencyReporter
@@ -833,12 +829,6 @@ def convert(
             interpolation=cv2.INTER_NEAREST,
             dsize=(processing_w, processing_h),
         )
-        processing_labels_np = cv2.resize(
-            src=target_labels_np,
-            interpolation=cv2.INTER_NEAREST,
-            dsize=(processing_w, processing_h),
-        )
-
         processing_height_logits = torch.from_numpy(processing_height_logits_np).float()
 
         # Setup optimization at PROCESSING resolution
@@ -877,7 +867,7 @@ def convert(
                 bar.update(10)  # Update by 10 since callback is called every 10 steps
                 progress_callback(step, loss_dict, pred_image, height_map)
 
-            loss_history = optimizer.optimize(
+            optimizer.optimize(
                 target_image=processing_image,  # Use processing image
                 material_colors=selected_colors,
                 callback=progress_wrapper,
@@ -1291,8 +1281,8 @@ def analyze_colors(
                         }
                     )
 
-                # Initialize transparency integration
-                transparency_integration = TransparencyIntegration(
+                # Validate transparency integration can be initialized.
+                TransparencyIntegration(
                     material_db=material_db,
                     color_matcher=None,  # Will use internal matcher
                     layer_optimizer=None,
@@ -1381,7 +1371,7 @@ def analyze_colors(
                 transparency_analysis["recommendations"] = recommendations
 
                 # Display transparency analysis
-                click.echo(f"  Method: lab (transparency-aware)")
+                click.echo("  Method: lab (transparency-aware)")
                 click.echo(f"  Base Materials: {base_materials}")
                 click.echo(
                     f"  Achievable Colors: {achievable_colors} ({achievable_colors//base_materials}x expansion)"

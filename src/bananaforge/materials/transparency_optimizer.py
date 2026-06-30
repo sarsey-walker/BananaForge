@@ -4,17 +4,17 @@ This module implements optimization algorithms that use transparency mixing to
 reduce material swaps by 30% or more while maintaining visual quality.
 """
 
-from typing import Dict, List, Optional, Tuple, Union
-import torch
-import torch.nn as nn
-import numpy as np
-from dataclasses import dataclass
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-import threading
+from dataclasses import dataclass
+from typing import Dict, List
 
-from .transparency_mixer import TransparencyColorMixer
+import numpy as np
+import torch
+
 from .base_layer_optimizer import BaseLayerOptimizer
+from .transparency_mixer import TransparencyColorMixer
 
 
 @dataclass
@@ -592,8 +592,6 @@ class TransparencyOptimizer:
     ) -> Dict:
         """Calculate detailed material costs."""
         layer_height = 0.08  # mm, typical layer height
-        nozzle_diameter = 0.4  # mm
-
         # Calculate volume per pixel
         pixel_area = 1.0  # Normalized pixel area
 

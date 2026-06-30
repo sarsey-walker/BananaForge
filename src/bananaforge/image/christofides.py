@@ -5,7 +5,6 @@ import random
 
 import numpy as np
 from joblib import Parallel, delayed
-from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from skimage.color import rgb2lab
 from sklearn.cluster import KMeans, MiniBatchKMeans

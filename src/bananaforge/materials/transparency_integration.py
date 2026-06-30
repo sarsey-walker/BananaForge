@@ -4,14 +4,13 @@ This module implements Story 4.5.6: Integration with Existing Material Assignmen
 ensuring seamless integration while maintaining backward compatibility.
 """
 
-from typing import Dict, List, Optional, Tuple, Union, Any
-import torch
-import numpy as np
 from dataclasses import dataclass
-import json
+from typing import Any, Dict, List
 
-from .transparency_mixer import TransparencyColorMixer
+import torch
+
 from .base_layer_optimizer import BaseLayerOptimizer
+from .transparency_mixer import TransparencyColorMixer
 from .transparency_optimizer import TransparencyOptimizer
 
 
@@ -68,7 +67,10 @@ class TransparencyIntegration:
         }
 
     def enable_transparency_mode(
-        self, existing_workflow_data: Dict, transparency_config: Dict, setup_mode: bool = False
+        self,
+        existing_workflow_data: Dict,
+        transparency_config: Dict,
+        setup_mode: bool = False,
     ) -> Dict:
         """Enable transparency mode and integrate with existing workflow.
 
@@ -82,7 +84,9 @@ class TransparencyIntegration:
         """
         try:
             # Validate compatibility
-            compatibility_check = self._check_compatibility(existing_workflow_data, setup_mode=setup_mode)
+            compatibility_check = self._check_compatibility(
+                existing_workflow_data, setup_mode=setup_mode
+            )
 
             if not compatibility_check["compatible"]:
                 return {
@@ -90,12 +94,6 @@ class TransparencyIntegration:
                     "error": "Incompatible workflow data",
                     "compatibility_check": compatibility_check,
                 }
-
-            # Extract workflow components
-            image = existing_workflow_data.get("image")
-            height_map = existing_workflow_data.get("height_map")
-            material_assignments = existing_workflow_data.get("material_assignments")
-            materials = existing_workflow_data.get("materials", [])
 
             # Create enhanced workflow
             enhanced_workflow = self._create_enhanced_workflow(
@@ -397,9 +395,11 @@ class TransparencyIntegration:
 
     # Private helper methods
 
-    def _check_compatibility(self, workflow_data: Dict, setup_mode: bool = False) -> Dict:
+    def _check_compatibility(
+        self, workflow_data: Dict, setup_mode: bool = False
+    ) -> Dict:
         """Check compatibility of workflow data with transparency features.
-        
+
         Args:
             workflow_data: Workflow data to check
             setup_mode: If True, allows missing height_map and material_assignments
@@ -410,16 +410,21 @@ class TransparencyIntegration:
             optional_fields = ["height_map", "material_assignments"]
         else:
             # In full mode, require all fields
-            required_fields = ["image", "height_map", "material_assignments", "materials"]
+            required_fields = [
+                "image",
+                "height_map",
+                "material_assignments",
+                "materials",
+            ]
             optional_fields = []
-        
+
         missing_fields = []
         optional_missing = []
 
         for field in required_fields:
             if field not in workflow_data or workflow_data[field] is None:
                 missing_fields.append(field)
-        
+
         for field in optional_fields:
             if field not in workflow_data or workflow_data[field] is None:
                 optional_missing.append(field)
@@ -430,7 +435,8 @@ class TransparencyIntegration:
         compatibility_details = {
             "material_db_compatible": self.material_db is not None,
             "color_matcher_compatible": self.color_matcher is not None,
-            "optimizer_compatible": setup_mode or self.layer_optimizer is not None,  # Relax in setup mode
+            "optimizer_compatible": setup_mode
+            or self.layer_optimizer is not None,  # Relax in setup mode
         }
 
         return {
@@ -541,7 +547,6 @@ class TransparencyIntegration:
         self, workflow_data: Dict, transparency_config: Dict
     ) -> Dict:
         """Run optimization with specific transparency configuration."""
-        image = workflow_data.get("image")
         height_map = workflow_data.get("height_map")
         material_assignments = workflow_data.get("material_assignments")
         materials = workflow_data.get("materials", [])

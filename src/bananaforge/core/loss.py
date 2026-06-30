@@ -151,11 +151,11 @@ class ColorLoss(nn.Module):
         r, g, b = rgb[:, 0:1], rgb[:, 1:2], rgb[:, 2:3]
 
         # Approximate L*a*b* conversion
-        l = 0.299 * r + 0.587 * g + 0.114 * b
+        lightness = 0.299 * r + 0.587 * g + 0.114 * b
         a = 0.5 * (r - g)
         b_comp = 0.5 * (g + r - 2 * b)
 
-        return torch.cat([l, a, b_comp], dim=1)
+        return torch.cat([lightness, a, b_comp], dim=1)
 
 
 class SmoothnessLoss(nn.Module):

@@ -1,22 +1,25 @@
 """Advanced color matching algorithms for material selection."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-import cv2
 import numpy as np
 import torch
-import torch.nn as nn
 from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import KMeans
 
-from .database import Material, MaterialDatabase
+from .database import MaterialDatabase
 from .transparency_mixer import TransparencyColorMixer
 
 
 class ColorMatcher:
     """Advanced color matching for material selection."""
 
-    def __init__(self, material_db: MaterialDatabase, device: str = "cuda", enable_transparency: bool = False):
+    def __init__(
+        self,
+        material_db: MaterialDatabase,
+        device: str = "cuda",
+        enable_transparency: bool = False,
+    ):
         """Initialize color matcher.
 
         Args:
@@ -29,7 +32,7 @@ class ColorMatcher:
         self.material_colors = material_db.get_color_palette(device)
         self.material_ids = material_db.get_material_ids()
         self.enable_transparency = enable_transparency
-        
+
         # Initialize transparency mixer if enabled
         if enable_transparency:
             self.transparency_mixer = TransparencyColorMixer(device=device)
@@ -52,7 +55,7 @@ class ColorMatcher:
         # Check if image is grayscale and handle appropriately
         if self._is_grayscale_image(image):
             return self._grayscale_matching(image, max_materials)
-        
+
         if method == "perceptual":
             return self._perceptual_matching(image, max_materials)
         elif method == "euclidean":
@@ -70,8 +73,10 @@ class ColorMatcher:
         dominant_colors = self._extract_dominant_colors(image, max_materials * 2)
 
         # If transparency is enabled, consider achievable colors through mixing
-        if self.enable_transparency and hasattr(self, 'transparency_mixer'):
-            return self._transparency_aware_matching(image, dominant_colors, max_materials)
+        if self.enable_transparency and hasattr(self, "transparency_mixer"):
+            return self._transparency_aware_matching(
+                image, dominant_colors, max_materials
+            )
 
         # Standard perceptual matching
         # Convert to LAB color space
@@ -327,7 +332,6 @@ class ColorMatcher:
         for _ in range(iterations):
             # Try swapping each material with alternatives
             for i in range(len(current_materials)):
-                original_material = current_materials[i]
                 original_color = current_colors[i]
 
                 # Find similar materials to try
@@ -384,11 +388,11 @@ class ColorMatcher:
         r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
 
         # Approximate L*a*b* conversion
-        l = 0.299 * r + 0.587 * g + 0.114 * b
+        lightness = 0.299 * r + 0.587 * g + 0.114 * b
         a = 0.5 + 0.5 * (r - g)
         b_comp = 0.5 + 0.25 * (g + r - 2 * b)
 
-        return torch.stack([l, a, b_comp], dim=-1)
+        return torch.stack([lightness, a, b_comp], dim=-1)
 
     def create_transition_map(
         self,
@@ -464,26 +468,22 @@ class ColorMatcher:
             # Fallback to regular matching if no grayscale materials
             return self._perceptual_matching(image, max_materials)
 
-        # Convert image to luminance (grayscale intensity)
-        luminance = 0.299 * image[:, 0] + 0.587 * image[:, 1] + 0.114 * image[:, 2]
-
-        # Get luminance statistics
-        min_lum = luminance.min().item()
-        max_lum = luminance.max().item()
-        lum_range = max_lum - min_lum
-
         # Select materials based on luminance levels
         selected_materials = []
         selected_colors = []
 
         # Always include the darkest available material
-        darkest_mat = min(grayscale_materials, key=lambda m: m.color_tensor.mean().item())
+        darkest_mat = min(
+            grayscale_materials, key=lambda m: m.color_tensor.mean().item()
+        )
         selected_materials.append(darkest_mat)
         selected_colors.append(darkest_mat.color_tensor)
 
         # Always include the lightest available material if we have space
         if max_materials > 1:
-            lightest_mat = max(grayscale_materials, key=lambda m: m.color_tensor.mean().item())
+            lightest_mat = max(
+                grayscale_materials, key=lambda m: m.color_tensor.mean().item()
+            )
             if lightest_mat.id != darkest_mat.id:
                 selected_materials.append(lightest_mat)
                 selected_colors.append(lightest_mat.color_tensor)
@@ -492,13 +492,14 @@ class ColorMatcher:
         if max_materials > 2 and len(grayscale_materials) > 2:
             # Find materials with intermediate luminance
             remaining_materials = [
-                m for m in grayscale_materials 
+                m
+                for m in grayscale_materials
                 if m.id not in [darkest_mat.id, lightest_mat.id]
             ]
-            
+
             # Sort by luminance
             remaining_materials.sort(key=lambda m: m.color_tensor.mean().item())
-            
+
             # Add up to remaining slots
             for i, mat in enumerate(remaining_materials):
                 if len(selected_materials) >= max_materials:
@@ -522,16 +523,16 @@ class ColorMatcher:
             List of grayscale-appropriate materials
         """
         grayscale_materials = []
-        
+
         for i, material_id in enumerate(self.material_ids):
             material = self.material_db.get_material(material_id)
             if material and material.available:
                 color = material.color_tensor
-                
+
                 # Check if material is grayscale (R≈G≈B)
                 r, g, b = color[0].item(), color[1].item(), color[2].item()
-                color_diff = max(abs(r-g), abs(r-b), abs(g-b))
-                
+                color_diff = max(abs(r - g), abs(r - b), abs(g - b))
+
                 # Consider it grayscale if color channels are very similar
                 if color_diff < 0.1:
                     grayscale_materials.append(material)
@@ -556,13 +557,19 @@ class ColorMatcher:
             )
 
         h, w = image.shape[-2:]
-        
+
         # Convert image to luminance
-        luminance = (0.299 * image[:, 0] + 0.587 * image[:, 1] + 0.114 * image[:, 2]).flatten()
-        
+        luminance = (
+            0.299 * image[:, 0] + 0.587 * image[:, 1] + 0.114 * image[:, 2]
+        ).flatten()
+
         # Convert target colors to luminance
-        target_luminance = (0.299 * target_colors[:, 0] + 0.587 * target_colors[:, 1] + 0.114 * target_colors[:, 2])
-        
+        target_luminance = (
+            0.299 * target_colors[:, 0]
+            + 0.587 * target_colors[:, 1]
+            + 0.114 * target_colors[:, 2]
+        )
+
         # Find closest target luminance for each pixel
         distances = torch.abs(luminance.unsqueeze(1) - target_luminance.unsqueeze(0))
         closest_indices = torch.argmin(distances, dim=1)
@@ -576,57 +583,65 @@ class ColorMatcher:
         self, image: torch.Tensor, dominant_colors: torch.Tensor, max_materials: int
     ) -> Tuple[List[str], torch.Tensor, torch.Tensor]:
         """Color matching that considers achievable colors through transparency mixing.
-        
+
         This method finds the optimal set of base materials that can create the target
         colors through transparency mixing (e.g., red + white = pink).
         """
         # Get all achievable colors through transparency mixing
-        filament_colors = [self.material_colors[i] for i in range(len(self.material_colors))]
+        filament_colors = [
+            self.material_colors[i] for i in range(len(self.material_colors))
+        ]
         achievable_combinations = self.transparency_mixer.compute_achievable_colors(
             filament_colors, max_layers=3
         )
-        
+
         # Convert to tensors for efficient processing
-        achievable_colors = torch.stack([combo["color"] for combo in achievable_combinations]).to(self.device)
-        
+        achievable_colors = torch.stack(
+            [combo["color"] for combo in achievable_combinations]
+        ).to(self.device)
+
         # Convert dominant colors and achievable colors to LAB space for perceptual matching
         dominant_lab = self._rgb_to_lab(dominant_colors)
         achievable_lab = self._rgb_to_lab(achievable_colors)
-        
+
         # Find best matches for each dominant color
         best_combinations = []
         selected_material_indices = set()
-        
+
         for dominant_color_lab in dominant_lab:
             # Calculate perceptual distances to all achievable colors
-            distances = torch.norm(achievable_lab - dominant_color_lab.unsqueeze(0), dim=1)
-            
+            distances = torch.norm(
+                achievable_lab - dominant_color_lab.unsqueeze(0), dim=1
+            )
+
             # Find best matches that don't exceed our material budget
             sorted_indices = torch.argsort(distances)
-            
+
             for idx in sorted_indices:
                 combo = achievable_combinations[idx.item()]
                 base_idx = combo["base_material"]
                 overlay_idx = combo["overlay_material"]
-                
+
                 # Check if adding this combination would exceed material budget
                 required_materials = {base_idx, overlay_idx}
                 if len(selected_material_indices | required_materials) <= max_materials:
                     best_combinations.append(combo)
                     selected_material_indices.update(required_materials)
                     break
-            
+
             if len(best_combinations) >= max_materials:
                 break
-        
+
         # Extract unique materials needed
         final_material_indices = list(selected_material_indices)[:max_materials]
         final_material_ids = [self.material_ids[i] for i in final_material_indices]
-        final_colors = torch.stack([self.material_colors[i] for i in final_material_indices])
-        
+        final_colors = torch.stack(
+            [self.material_colors[i] for i in final_material_indices]
+        )
+
         # Create color mapping using the final selected materials
         color_mapping = self._create_color_mapping(image, final_colors)
-        
+
         return final_material_ids, final_colors, color_mapping
 
 

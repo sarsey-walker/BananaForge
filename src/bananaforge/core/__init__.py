@@ -1,16 +1,16 @@
 """Core optimization engine for BananaForge."""
 
+from .enhanced_optimizer import (
+    DiscreteValidator,
+    EnhancedEarlyStopping,
+    EnhancedLayerOptimizer,
+    EnhancedOptimizationConfig,
+    LearningRateScheduler,
+    MixedPrecisionManager,
+)
 from .gumbel import GumbelSoftmax
 from .loss import ColorLoss, PerceptualLoss, SmoothnessLoss
 from .optimizer import LayerOptimizer
-from .enhanced_optimizer import (
-    EnhancedLayerOptimizer,
-    EnhancedOptimizationConfig,
-    DiscreteValidator,
-    LearningRateScheduler,
-    EnhancedEarlyStopping,
-    MixedPrecisionManager,
-)
 
 __all__ = [
     "LayerOptimizer",

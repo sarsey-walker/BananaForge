@@ -5,7 +5,6 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from ..materials.manager import MaterialManager
 from ..utils.config import Config
 from .christofides import run_init_threads
 

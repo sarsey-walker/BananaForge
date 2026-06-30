@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from ..materials.database import MaterialDatabase
 from .instructions import CostCalculator, ProjectFileGenerator, SwapInstructionGenerator
 from .stl_generator import STLGenerator
-from .threemf_exporter import ThreeMFExporter, ThreeMFExportConfig
+from .threemf_exporter import ThreeMFExportConfig, ThreeMFExporter
 
 
 class ModelExporter:
@@ -58,14 +58,18 @@ class ModelExporter:
             base_height,
             bottom_mode=self.bottom_mode,
         )
-        self.instruction_generator = SwapInstructionGenerator(layer_height, initial_layer_height)
+        self.instruction_generator = SwapInstructionGenerator(
+            layer_height, initial_layer_height
+        )
         self.project_generator = ProjectFileGenerator()
         self.cost_calculator = CostCalculator()
-        
+
         # Initialize 3MF exporter if material database is available
         self.threemf_exporter = None
         if material_db:
-            self.threemf_exporter = ThreeMFExporter(device=device, material_db=material_db)
+            self.threemf_exporter = ThreeMFExporter(
+                device=device, material_db=material_db
+            )
 
         self.logger = logging.getLogger(__name__)
 
@@ -162,8 +166,10 @@ class ModelExporter:
                 )
 
                 if instructions is None:
-                    instructions = self.instruction_generator.generate_swap_instructions(
-                        material_assignments, material_database, material_ids
+                    instructions = (
+                        self.instruction_generator.generate_swap_instructions(
+                            material_assignments, material_database, material_ids
+                        )
                     )
 
                 cost_report_path = output_dir / f"{project_name}_cost_report.txt"
@@ -193,42 +199,46 @@ class ModelExporter:
             # 1.5. Generate 3MF file if requested
             if "3mf" in export_formats and self.threemf_exporter:
                 threemf_path = output_dir / f"{project_name}.3mf"
-                
+
                 # Prepare optimization results for 3MF export
                 optimization_results = {
-                    'heightmap': height_map,
-                    'material_assignments': material_assignments,
-                    'layer_materials': self._create_layer_materials_dict(
+                    "heightmap": height_map,
+                    "material_assignments": material_assignments,
+                    "layer_materials": self._create_layer_materials_dict(
                         material_assignments, material_ids
                     ),
-                    'optimization_metadata': {
-                        'physical_size': self.physical_size,
-                        'layer_height': self.layer_height,
-                        'project_name': project_name
+                    "optimization_metadata": {
+                        "physical_size": self.physical_size,
+                        "layer_height": self.layer_height,
+                        "project_name": project_name,
                     },
-                    'source_image_path': source_image_path,
-                    'stl_path': generated_files.get("stl"),
-                    'max_triangles': max_triangles,
-                    'bottom_mode': self.bottom_mode,
+                    "source_image_path": source_image_path,
+                    "stl_path": generated_files.get("stl"),
+                    "max_triangles": max_triangles,
+                    "bottom_mode": self.bottom_mode,
                 }
-                
+
                 # Configure 3MF export
                 threemf_config = ThreeMFExportConfig(
                     bambu_compatible=bambu_compatible or "bambu" in export_formats,
                     include_metadata=True,
-                    validate_output=True
+                    validate_output=True,
                 )
-                
+
                 # Export to 3MF
                 result = self.threemf_exporter.export(
                     optimization_results, threemf_path, threemf_config
                 )
-                
-                if result['success']:
+
+                if result["success"]:
                     generated_files["3mf"] = str(threemf_path)
-                    self.logger.info(f"Generated 3MF: {threemf_path} ({result['file_size']} bytes)")
+                    self.logger.info(
+                        f"Generated 3MF: {threemf_path} ({result['file_size']} bytes)"
+                    )
                 else:
-                    self.logger.error(f"3MF export failed: {result.get('error', 'Unknown error')}")
+                    self.logger.error(
+                        f"3MF export failed: {result.get('error', 'Unknown error')}"
+                    )
 
             # 3. Generate project files
             if "hueforge" in export_formats:
@@ -355,7 +365,8 @@ class ModelExporter:
         target_width = max(2, int(width * scale))
 
         while (
-            cls.estimate_triangle_count(target_height, target_width, bottom_mode) > max_triangles
+            cls.estimate_triangle_count(target_height, target_width, bottom_mode)
+            > max_triangles
             and target_height > 2
             and target_width > 2
         ):
@@ -409,11 +420,15 @@ class ModelExporter:
             mode="nearest",
         ).to(height_map.dtype)
 
-        resized_assignments = F.interpolate(
-            material_assignments.float().unsqueeze(0),
-            size=(target_height, target_width),
-            mode="nearest",
-        ).squeeze(0).to(material_assignments.dtype)
+        resized_assignments = (
+            F.interpolate(
+                material_assignments.float().unsqueeze(0),
+                size=(target_height, target_width),
+                mode="nearest",
+            )
+            .squeeze(0)
+            .to(material_assignments.dtype)
+        )
 
         return resized_height_map, resized_assignments
 
@@ -421,38 +436,38 @@ class ModelExporter:
         self, material_assignments: torch.Tensor, material_ids: List[str]
     ) -> Dict[int, Dict[str, Union[str, float]]]:
         """Create layer materials dictionary from material assignments.
-        
+
         Args:
             material_assignments: Tensor of material assignments per layer (num_layers, H, W)
             material_ids: List of material IDs
-            
+
         Returns:
             Dictionary mapping layer index to material info
         """
         layer_materials = {}
         num_layers = material_assignments.shape[0]
-        
+
         # Determine dominant material for each layer (same logic as SwapInstructionGenerator)
         for layer_idx in range(num_layers):
             layer_assignment = material_assignments[layer_idx]
-            
+
             # Find most common material in this layer
             unique_materials, counts = torch.unique(
                 layer_assignment, return_counts=True
             )
             dominant_material_idx = unique_materials[torch.argmax(counts)].item()
-            
+
             if dominant_material_idx < len(material_ids):
                 dominant_material = material_ids[int(dominant_material_idx)]
             else:
                 dominant_material = material_ids[0] if material_ids else "unknown"
-            
+
             layer_materials[layer_idx] = {
-                'material_id': dominant_material,
-                'transparency': 1.0,
-                'layer_height': self.layer_height
+                "material_id": dominant_material,
+                "transparency": 1.0,
+                "layer_height": self.layer_height,
             }
-        
+
         return layer_materials
 
     def export_for_printer(
@@ -666,7 +681,7 @@ class ModelExporter:
         include_swap_instructions: bool = True,
     ) -> Dict[str, any]:
         """Export project as HueForge-compatible .hfp file.
-        
+
         Args:
             height_map: Height map tensor (1, 1, H, W)
             material_assignments: Material assignments tensor (L, H, W)
@@ -676,21 +691,21 @@ class ModelExporter:
             alpha_mask: Optional alpha mask for transparency support
             hueforge_version: Target HueForge version
             include_swap_instructions: Whether to include swap instructions
-            
+
         Returns:
             Dictionary with export results and metadata
         """
-        import zipfile
         import json
         import tempfile
+        import zipfile
         from datetime import datetime
-        
+
         output_path = Path(output_path)
-        
+
         # Create temporary directory for HFP contents
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
+
             # 1. Generate project metadata
             project_data = {
                 "hueforge_version": hueforge_version,
@@ -698,14 +713,24 @@ class ModelExporter:
                 "created_at": datetime.now().isoformat(),
                 "schema_version": "2.0",
                 "print_settings": {
-                    "layer_height": optimization_params.get("layer_height", self.layer_height),
-                    "initial_layer_height": optimization_params.get("initial_layer_height", self.initial_layer_height),
-                    "total_layers": optimization_params.get("total_layers", int(height_map.max().item())),
-                    "nozzle_diameter": optimization_params.get("nozzle_diameter", self.nozzle_diameter),
+                    "layer_height": optimization_params.get(
+                        "layer_height", self.layer_height
+                    ),
+                    "initial_layer_height": optimization_params.get(
+                        "initial_layer_height", self.initial_layer_height
+                    ),
+                    "total_layers": optimization_params.get(
+                        "total_layers", int(height_map.max().item())
+                    ),
+                    "nozzle_diameter": optimization_params.get(
+                        "nozzle_diameter", self.nozzle_diameter
+                    ),
                     "print_speed": optimization_params.get("print_speed", 150),
                     "temperature": optimization_params.get("temperature", 210),
                     "bed_temperature": optimization_params.get("bed_temperature", 60),
-                    "infill_percentage": optimization_params.get("infill_percentage", 15),
+                    "infill_percentage": optimization_params.get(
+                        "infill_percentage", 15
+                    ),
                     "supports": optimization_params.get("supports", False),
                     "brim": optimization_params.get("brim", True),
                     "brim_width": optimization_params.get("brim_width", 5.0),
@@ -720,8 +745,12 @@ class ModelExporter:
                         "width_px": height_map.shape[-1],
                         "height_px": height_map.shape[-2],
                     },
-                    "estimated_print_time": self._estimate_hueforge_print_time(height_map, material_assignments),
-                    "estimated_material_usage": self._estimate_material_usage_for_hfp(height_map, material_assignments, materials),
+                    "estimated_print_time": self._estimate_hueforge_print_time(
+                        height_map, material_assignments
+                    ),
+                    "estimated_material_usage": self._estimate_material_usage_for_hfp(
+                        height_map, material_assignments, materials
+                    ),
                 },
                 "optimization_info": {
                     "iterations": optimization_params.get("iterations", 0),
@@ -729,7 +758,7 @@ class ModelExporter:
                     "optimizer_type": "BananaForge Enhanced",
                 },
             }
-            
+
             # Add alpha channel support info
             if alpha_mask is not None:
                 project_data["alpha_support"] = True
@@ -738,17 +767,14 @@ class ModelExporter:
                     project_data["transparency_regions"] = transparency_regions
             else:
                 project_data["alpha_support"] = False
-            
+
             # Save project metadata
             with open(temp_path / "project.json", "w") as f:
                 json.dump(project_data, f, indent=2)
-            
+
             # 2. Generate material definitions
-            materials_data = {
-                "version": "1.0",
-                "materials": []
-            }
-            
+            materials_data = {"version": "1.0", "materials": []}
+
             for material in materials:
                 material_def = {
                     "id": material["id"],
@@ -761,32 +787,30 @@ class ModelExporter:
                     "bed_temperature": material.get("bed_temperature", 60),
                 }
                 materials_data["materials"].append(material_def)
-            
+
             with open(temp_path / "materials.json", "w") as f:
                 json.dump(materials_data, f, indent=2)
-            
+
             # 3. Generate swap instructions
             if include_swap_instructions:
                 material_ids = [m["id"] for m in materials]
-                
+
                 # Create a mock material database for instruction generation
                 from ..materials.database import MaterialDatabase
+
                 mock_db = MaterialDatabase()
                 for material in materials:
                     # This would need proper Material object creation in a real implementation
                     pass
-                
+
                 instructions = self.instruction_generator.generate_swap_instructions(
                     material_assignments=material_assignments,
                     material_database=mock_db,
                     material_ids=material_ids,
                 )
-                
-                instructions_data = {
-                    "version": "1.0", 
-                    "swap_instructions": []
-                }
-                
+
+                instructions_data = {"version": "1.0", "swap_instructions": []}
+
                 for inst in instructions:
                     instruction_dict = {
                         "layer": inst.layer_number,
@@ -797,16 +821,16 @@ class ModelExporter:
                         "notes": f"Swap from {inst.old_material} to {inst.new_material}",
                     }
                     instructions_data["swap_instructions"].append(instruction_dict)
-                
+
                 with open(temp_path / "instructions.json", "w") as f:
                     json.dump(instructions_data, f, indent=2)
-            
+
             # 4. Generate STL files for each material
             material_ids = [m["id"] for m in materials]
-            
+
             if alpha_mask is not None:
                 # Use alpha-aware STL generation
-                stl_paths = self.stl_generator.generate_layer_stls_with_alpha(
+                self.stl_generator.generate_layer_stls_with_alpha(
                     height_map=height_map,
                     material_assignments=material_assignments,
                     material_ids=material_ids,
@@ -816,24 +840,24 @@ class ModelExporter:
                 )
             else:
                 # Use standard STL generation
-                stl_paths = self.stl_generator.generate_layer_stls(
+                self.stl_generator.generate_layer_stls(
                     height_map=height_map,
                     material_assignments=material_assignments,
                     material_ids=material_ids,
                     output_dir=temp_path,
                     physical_size=self.physical_size,
                 )
-            
+
             # 5. Create the .hfp ZIP archive
-            with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 # Add all files from temp directory
-                for file_path in temp_path.rglob('*'):
+                for file_path in temp_path.rglob("*"):
                     if file_path.is_file():
                         arcname = file_path.relative_to(temp_path)
                         zipf.write(file_path, arcname)
-        
+
         self.logger.info(f"HueForge project exported to {output_path}")
-        
+
         return {
             "success": True,
             "output_path": str(output_path),
@@ -842,46 +866,51 @@ class ModelExporter:
             "hueforge_version": hueforge_version,
         }
 
-    def validate_hueforge_compatibility(self, project_path: Union[str, Path]) -> Dict[str, any]:
+    def validate_hueforge_compatibility(
+        self, project_path: Union[str, Path]
+    ) -> Dict[str, any]:
         """Validate that a project file is compatible with HueForge.
-        
+
         Args:
             project_path: Path to .hfp project file
-            
+
         Returns:
             Dictionary with validation results
         """
-        import zipfile
         import json
-        
+        import zipfile
+
         project_path = Path(project_path)
-        
+
         try:
             if not zipfile.is_zipfile(project_path):
                 return {"valid": False, "error": "File is not a valid ZIP archive"}
-            
-            with zipfile.ZipFile(project_path, 'r') as zipf:
+
+            with zipfile.ZipFile(project_path, "r") as zipf:
                 file_list = zipf.namelist()
-                
+
                 # Check required files
                 required_files = ["project.json", "materials.json"]
                 missing_files = [f for f in required_files if f not in file_list]
                 if missing_files:
-                    return {"valid": False, "error": f"Missing required files: {missing_files}"}
-                
+                    return {
+                        "valid": False,
+                        "error": f"Missing required files: {missing_files}",
+                    }
+
                 # Validate project.json
                 project_data = json.loads(zipf.read("project.json"))
-                
+
                 if "hueforge_version" not in project_data:
                     return {"valid": False, "error": "Missing HueForge version"}
-                
+
                 version = project_data["hueforge_version"]
-                
+
                 # Check for STL files
-                stl_files = [f for f in file_list if f.endswith('.stl')]
+                stl_files = [f for f in file_list if f.endswith(".stl")]
                 if not stl_files:
                     return {"valid": False, "error": "No STL files found"}
-                
+
                 return {
                     "valid": True,
                     "version": version,
@@ -890,102 +919,115 @@ class ModelExporter:
                     "stl_count": len(stl_files),
                     "has_instructions": "instructions.json" in file_list,
                 }
-        
+
         except Exception as e:
             return {"valid": False, "error": f"Validation failed: {str(e)}"}
 
-    def _estimate_hueforge_print_time(self, height_map: torch.Tensor, material_assignments: torch.Tensor) -> str:
+    def _estimate_hueforge_print_time(
+        self, height_map: torch.Tensor, material_assignments: torch.Tensor
+    ) -> str:
         """Estimate print time for HueForge project."""
         # Simplified estimation
         num_layers = int(height_map.max().item())
-        area_mm2 = self.physical_size ** 2
-        
+        area_mm2 = self.physical_size**2
+
         # Rough estimate: 1 minute per layer per 100mm²
         base_time_minutes = (num_layers * area_mm2) / 100
-        
+
         # Add swap time
         num_swaps = self._count_material_swaps(material_assignments)
         swap_time_minutes = num_swaps * 2  # 2 minutes per swap
-        
+
         total_minutes = base_time_minutes + swap_time_minutes
         hours = int(total_minutes // 60)
         minutes = int(total_minutes % 60)
-        
+
         return f"{hours}h {minutes}m"
 
-    def _estimate_material_usage_for_hfp(self, height_map: torch.Tensor, material_assignments: torch.Tensor, materials: List[Dict]) -> Dict[str, float]:
+    def _estimate_material_usage_for_hfp(
+        self,
+        height_map: torch.Tensor,
+        material_assignments: torch.Tensor,
+        materials: List[Dict],
+    ) -> Dict[str, float]:
         """Estimate material usage for HueForge project."""
         usage = {}
-        
+
         # Calculate volume per material
-        layer_volume_mm3 = (self.physical_size ** 2) * self.layer_height
-        
+        layer_volume_mm3 = (self.physical_size**2) * self.layer_height
+
         for i, material in enumerate(materials):
             material_layers = (material_assignments == i).sum().item()
             volume_mm3 = material_layers * layer_volume_mm3
-            
+
             # Convert to grams (assuming PLA density ~1.24 g/cm³)
             volume_cm3 = volume_mm3 / 1000
             weight_grams = volume_cm3 * material.get("density", 1.24)
-            
+
             usage[material["id"]] = {
                 "weight_grams": round(weight_grams, 2),
                 "volume_cm3": round(volume_cm3, 2),
             }
-        
+
         return usage
 
     def _detect_transparency_regions(self, alpha_mask: torch.Tensor) -> List[Dict]:
         """Detect transparency regions in alpha mask."""
         import numpy as np
         from scipy import ndimage
-        
+
         # Convert to numpy and find transparent regions
         alpha_np = alpha_mask.cpu().numpy()
         transparent_regions = ~alpha_np  # Invert to get transparent areas
-        
+
         # Label connected components
         labeled, num_features = ndimage.label(transparent_regions)
-        
+
         regions = []
         for i in range(1, num_features + 1):
             region_mask = labeled == i
-            
+
             # Get bounding box
             coords = np.where(region_mask)
             if len(coords[0]) > 0:
                 min_y, max_y = coords[0].min(), coords[0].max()
                 min_x, max_x = coords[1].min(), coords[1].max()
-                
-                regions.append({
-                    "id": i,
-                    "bounding_box": {
-                        "min_x": int(min_x),
-                        "max_x": int(max_x),
-                        "min_y": int(min_y),
-                        "max_y": int(max_y),
-                    },
-                    "area_pixels": int(region_mask.sum()),
-                })
-        
+
+                regions.append(
+                    {
+                        "id": i,
+                        "bounding_box": {
+                            "min_x": int(min_x),
+                            "max_x": int(max_x),
+                            "min_y": int(min_y),
+                            "max_y": int(max_y),
+                        },
+                        "area_pixels": int(region_mask.sum()),
+                    }
+                )
+
         return regions
 
     def _count_material_swaps(self, material_assignments: torch.Tensor) -> int:
         """Count the number of material swaps needed."""
         if material_assignments.numel() == 0:
             return 0
-        
+
         swaps = 0
         prev_material = None
-        
+
         for layer in range(material_assignments.shape[0]):
             layer_materials = torch.unique(material_assignments[layer])
-            layer_materials = layer_materials[layer_materials >= 0]  # Remove invalid materials
-            
+            layer_materials = layer_materials[
+                layer_materials >= 0
+            ]  # Remove invalid materials
+
             if len(layer_materials) > 0:
-                current_material = layer_materials[0].item()  # Simplified: use first material
+                current_material = layer_materials[
+                    0
+                ].item()  # Simplified: use first material
                 if prev_material is not None and current_material != prev_material:
                     swaps += 1
                 prev_material = current_material
-        
+
         return swaps

@@ -1,13 +1,12 @@
 """Material selection optimization algorithms."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
-from sklearn.cluster import KMeans
 
-from .database import Material, MaterialDatabase
+from .database import MaterialDatabase
 
 
 class MaterialOptimizer:
@@ -165,7 +164,6 @@ class MaterialOptimizer:
 
         best_score = -1
         best_selection = None
-        best_num_materials = max_materials
 
         # Try different numbers of materials (fewer = less complex)
         for num_materials in range(2, max_materials + 1):
@@ -185,7 +183,6 @@ class MaterialOptimizer:
             if complexity_score > best_score:
                 best_score = complexity_score
                 best_selection = selected_indices
-                best_num_materials = num_materials
 
         selected_materials = [material_ids[i] for i in best_selection]
         selected_colors = material_colors[best_selection]

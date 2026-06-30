@@ -40,7 +40,9 @@ class MaterialManager:
             raise ValueError(f"Unsupported file format: {file_path.suffix}")
 
         # Update color matcher
-        self.matcher = ColorMatcher(self.database, self.device, enable_transparency=self.enable_transparency)
+        self.matcher = ColorMatcher(
+            self.database, self.device, enable_transparency=self.enable_transparency
+        )
 
     def load_default_materials(self, material_set: str = "bambu_pla") -> None:
         """Load default material set.
@@ -58,7 +60,9 @@ class MaterialManager:
             raise ValueError(f"Unknown material set: {material_set}")
 
         # Update color matcher
-        self.matcher = ColorMatcher(self.database, self.device, enable_transparency=self.enable_transparency)
+        self.matcher = ColorMatcher(
+            self.database, self.device, enable_transparency=self.enable_transparency
+        )
 
     def match_image_colors(
         self, image: torch.Tensor, max_materials: int = 8, method: str = "perceptual"
