@@ -516,6 +516,54 @@ class TestCLIConfigDefaults:
             "7|cpu|False|[(0, 0, 0), (255, 255, 255)]|stl,instructions,3mf"
         )
 
+    def test_resolve_convert_options_rejects_too_few_layers_for_ordered_colors(self):
+        """Ordered color layers require at least one layer per color."""
+        import logging
+
+        import click
+
+        from bananaforge.cli import _resolve_convert_options
+
+        class DummyContext:
+            obj = {}
+
+            def get_parameter_source(self, _parameter_name):
+                return click.core.ParameterSource.COMMANDLINE
+
+        with pytest.raises(click.ClickException):
+            _resolve_convert_options(
+                DummyContext(),
+                logging.getLogger(__name__),
+                output="./output",
+                max_materials=4,
+                max_layers=1,
+                layer_height=0.08,
+                initial_layer_height=0.16,
+                nozzle_diameter=0.4,
+                physical_size=180.0,
+                max_triangles=None,
+                bottom_mode="simplified",
+                iterations=6000,
+                learning_rate=0.01,
+                device="cpu",
+                export_format="stl,instructions",
+                project_name="bananaforge_model",
+                resolution=512,
+                preview=False,
+                random_seed=0,
+                enable_transparency=False,
+                opacity_levels="0.33,0.67,1.0",
+                ordered_color_layers=True,
+                color_layer_order="#000000,#FFFFFF",
+                color_layer_count=1,
+                optimize_base_layers=False,
+                enable_gradients=False,
+                transparency_threshold=0.3,
+                mixed_precision=False,
+                bambu_compatible=False,
+                include_3mf_metadata=True,
+            )
+
     def test_calculate_image_dimensions_preserves_landscape_aspect_ratio(self):
         """Landscape images should scale longest side to target resolution."""
         from bananaforge.cli import _calculate_image_dimensions

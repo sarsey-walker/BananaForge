@@ -64,7 +64,8 @@ bananaforge convert INPUT_IMAGE [OPTIONS]
 #### Ordered Color Layers
 - `--ordered-color-layers` - Generate deterministic cumulative layers in the color order you provide
 - `--color-layer-order LIST` - Comma-separated `#RRGGBB` colors, from bottom to top; requires at least 2 colors
-- `--color-layer-count INT` - Number of model layers to print for each ordered color (default: 1)
+- `--max-layers INT` - Total ordered layer budget; must be at least the number of ordered colors
+- `--color-layer-count INT` - Deprecated for ordered layers; kept for CLI compatibility
 
 Ordered color layers are not limited to any fixed palette. For example,
 `#000000,#FFFFFF,#FFD700` creates black, then white, then yellow layers, but
@@ -72,7 +73,10 @@ you can pass any 2 or more hex colors. Each requested color is mapped to the
 nearest selected material, so set `--max-materials` high enough and provide a
 material database that contains suitable filament colors. This mode disables
 transparency optimization and skips the normal optimizer because the layer
-stack is generated directly from the requested order.
+stack is generated directly from the requested order. `--max-layers` is divided
+across the colors, with extra layers assigned to lower colors first. Pixels for
+upper colors also print lower colors beneath them so they are physically
+supported.
 
 #### Model Parameters
 - `--max-layers INT` - Maximum number of layers (default: 15)
@@ -144,7 +148,7 @@ bananaforge convert photo.jpg \
 bananaforge convert artwork.png \
   --ordered-color-layers \
   --color-layer-order "#000000,#FFFFFF,#FFD700" \
-  --color-layer-count 2 \
+  --max-layers 9 \
   --max-materials 3 \
   --materials ./materials.csv \
   --export-format stl,instructions,3mf

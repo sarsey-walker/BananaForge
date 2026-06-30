@@ -37,7 +37,7 @@ bananaforge convert photo.jpg --enable-transparency --materials materials.csv --
 bananaforge convert artwork.png \
   --ordered-color-layers \
   --color-layer-order "#000000,#FFFFFF,#FFD700" \
-  --color-layer-count 2 \
+  --max-layers 9 \
   --materials materials.csv \
   --max-materials 3
 ```
@@ -84,7 +84,7 @@ bottom-to-top order you want.
 bananaforge convert artwork.png \
   --ordered-color-layers \
   --color-layer-order "#000000,#FFFFFF,#FFD700" \
-  --color-layer-count 2 \
+  --max-layers 9 \
   --materials materials.csv \
   --max-materials 3
 ```
@@ -92,7 +92,10 @@ bananaforge convert artwork.png \
 Each color is mapped to the nearest selected material. Increase
 `--max-materials` or adjust `--materials` if two requested colors resolve to the
 same filament. This mode disables transparency optimization and generates the
-layer stack deterministically from the requested order.
+layer stack deterministically from the requested order. `--max-layers` is the
+total layer budget: layers are divided across the ordered colors, with extra
+layers assigned to lower colors first. Pixels for upper colors also receive the
+lower colors underneath them so the print has physical support.
 
 ## 🛠 Installation
 

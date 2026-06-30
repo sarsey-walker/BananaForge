@@ -183,16 +183,26 @@ def _build_ordered_color_layers(
     target_image_np: np.ndarray,
     ordered_colors_rgb: Sequence[Tuple[int, int, int]],
     ordered_material_indices: Sequence[int],
-    color_layer_count: int,
+    max_layers: int,
     device: str,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Build cumulative material layers from an explicit color order."""
-    if color_layer_count < 1:
-        raise click.ClickException("--color-layer-count must be at least 1")
+    """Build supported ordered color layers from an explicit color order."""
     if len(ordered_colors_rgb) != len(ordered_material_indices):
         raise click.ClickException(
             "Ordered color count must match ordered material count"
         )
+    if max_layers < len(ordered_colors_rgb):
+        raise click.ClickException(
+            "--max-layers must be at least the number of ordered colors"
+        )
+
+    base_layer_count = max_layers // len(ordered_colors_rgb)
+    extra_layers = max_layers % len(ordered_colors_rgb)
+    layers_per_color = [
+        base_layer_count + (1 if index < extra_layers else 0)
+        for index in range(len(ordered_colors_rgb))
+    ]
+    cumulative_layer_ends = np.cumsum(layers_per_color).astype(np.int64)
 
     target_pixels = target_image_np.astype(np.float32)
     palette = np.asarray(ordered_colors_rgb, dtype=np.float32)
@@ -202,7 +212,7 @@ def _build_ordered_color_layers(
     )
     target_order_indices = np.argmin(distances, axis=-1).astype(np.int64)
 
-    height_values = (target_order_indices + 1) * color_layer_count
+    height_values = cumulative_layer_ends[target_order_indices]
     height_map = (
         torch.from_numpy(height_values.astype(np.float32))
         .unsqueeze(0)
@@ -210,20 +220,21 @@ def _build_ordered_color_layers(
         .to(device)
     )
 
-    num_color_layers = len(ordered_colors_rgb) * color_layer_count
     assignments = torch.full(
-        (num_color_layers, target_image_np.shape[0], target_image_np.shape[1]),
+        (max_layers, target_image_np.shape[0], target_image_np.shape[1]),
         fill_value=-1,
         dtype=torch.long,
         device=device,
     )
 
     target_order_tensor = torch.from_numpy(target_order_indices).to(device)
+    layer_start = 0
     for order_index, material_index in enumerate(ordered_material_indices):
         active_mask = target_order_tensor >= order_index
-        for repeat_index in range(color_layer_count):
-            layer_index = (order_index * color_layer_count) + repeat_index
+        layer_end = layer_start + layers_per_color[order_index]
+        for layer_index in range(layer_start, layer_end):
             assignments[layer_index][active_mask] = int(material_index)
+        layer_start = layer_end
 
     return height_map, assignments
 
@@ -382,6 +393,10 @@ def _resolve_convert_options(
         parsed_color_layer_order = _parse_hex_color_order(
             resolved["color_layer_order"]
         )
+        if resolved["max_layers"] < len(parsed_color_layer_order):
+            raise click.ClickException(
+                "--max-layers must be at least the number of ordered colors"
+            )
         if resolved["enable_transparency"]:
             click.echo(
                 "--ordered-color-layers disables transparency optimization; "
@@ -874,7 +889,10 @@ def cli(ctx, verbose: bool, quiet: bool, config):
     type=int,
     default=1,
     show_default=True,
-    help="Number of physical layers to print for each ordered color",
+    help=(
+        "Deprecated for --ordered-color-layers; ordered layers use "
+        "--max-layers as the total layer count"
+    ),
 )
 @click.option(
     "--optimize-base-layers",
@@ -1018,7 +1036,6 @@ def convert(
         random_seed = convert_options["random_seed"]
         enable_transparency = convert_options["enable_transparency"]
         opacity_levels = convert_options["opacity_levels"]
-        color_layer_count = convert_options["color_layer_count"]
         optimize_base_layers = convert_options["optimize_base_layers"]
         enable_gradients = convert_options["enable_gradients"]
         transparency_threshold = convert_options["transparency_threshold"]
@@ -1453,7 +1470,7 @@ def convert(
                 target_image_np=target_image_np,
                 ordered_colors_rgb=parsed_color_layer_order,
                 ordered_material_indices=ordered_material_indices,
-                color_layer_count=color_layer_count,
+                max_layers=max_layers,
                 device=device,
             )
             processing_ordered_height = torch.nn.functional.interpolate(
@@ -1466,7 +1483,7 @@ def convert(
             click.echo(
                 "Ordered color layer model generated with "
                 f"{len(parsed_color_layer_order)} colors and "
-                f"{color_layer_count} layer(s) per color"
+                f"{max_layers} total layer(s)"
             )
 
         click.echo(f"Final heightmap resolution: {final_height_map_full.shape}")
